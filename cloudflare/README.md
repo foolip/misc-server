@@ -1,0 +1,350 @@
+# marquee on Cloudflare
+
+This directory replaces the "marquee" nginx droplet (`debian/marquee/`) with a
+Cloudflare Worker in front of two R2 buckets. See
+[whatwg/misc-server#107](https://github.com/whatwg/misc-server/issues/107).
+
+This is phase 1 of the migration (see [Migration plan](#migration-plan)). Nothing
+here is deployed yet, because there is no Cloudflare account yet.
+
+## Architecture
+
+```
+            ┌──────────────────────────── Cloudflare ────────────────────────────┐
+ browser ──▶│ Always Use HTTPS ─▶ Worker "marquee" ─┬─▶ R2 whatwg-sites          │
+            │  (TLS, compression)  (src/, hosts.json)└─▶ R2 whatwg-snapshots      │
+            └─────────────────────────────────────────────────────────────────────┘
+```
+
+- **One Worker** (`marquee`) serves all 49 hosts in `debian/marquee/DOMAINS`.
+  17 of them only redirect; the other 32 serve files.
+- **R2 `whatwg-sites`** holds every site's files at `<host>/<path>`, for
+  example `dom.spec.whatwg.org/index.html`.
+- **R2 `whatwg-snapshots`** holds `<host>/commit-snapshots/…` and
+  `<host>/review-drafts/…`. These are write-once, so this bucket gets a bucket
+  lock in phase 2. Requests for `/commit-snapshots` and `/review-drafts` (and
+  anything under them) read from this bucket; everything else reads from
+  `whatwg-sites`.
+- **`config/hosts.json`** describes each host: redirects, `location` blocks,
+  content types, error pages and headers. It is generated from the nginx
+  config by `tools/nginx-to-json.mjs`.
+
+Files:
+
+| Path | What |
+| --- | --- |
+| `wrangler.jsonc` | Worker config: R2 bindings, staging env, production routes |
+| `src/index.mjs` | Worker entry point; passes the buckets and cache to the handler |
+| `src/handler.mjs` | Request handling (redirects, files, error pages, headers) |
+| `src/locations.mjs` | nginx `location` matching |
+| `src/path.mjs` | URI decoding/normalization, extensions, escaping |
+| `src/listing.mjs` | fancyindex-style directory listings |
+| `tools/nginx-to-json.mjs` | nginx → `config/hosts.json` converter |
+| `config/hosts.json` | Generated config (committed) |
+| `vendor/mime.types` | The `mime.types` marquee uses (see below) |
+| `test/*.test.mjs` | Unit tests and the offline replay of `../test/` |
+
+The handler takes the buckets and cache as arguments, so all of it runs under
+Node in tests with in-memory fakes.
+
+### Request handling
+
+The Worker reproduces what nginx does on marquee:
+
+1. **Host.** From the request URL. In the staging environment only, the
+   `X-Marquee-Host` request header overrides it. Production ignores that
+   header. An unknown host gets `421`.
+2. **Server-level `return`** (the redirect-only hosts) runs before anything
+   else, for any method. `$request_uri` and `$1`–`$9` are substituted
+   (non-participating captures are empty), and relative targets are made
+   absolute with the request's host, like nginx's `absolute_redirect on`.
+3. **Path.** Percent-decoded (`%2F` counts as `/`), slashes merged, dot
+   segments resolved. Invalid escapes and `..` above the root get `400`.
+4. **Location matching**, exactly as nginx does it: `=` exact match; else the
+   longest prefix, which wins if it's `^~`; else the first matching regex
+   (`~`, `~*`) in config order; else the longest prefix. `whatwg.conf` is
+   included at the top of each server block, so its locations (including
+   `~* \.js$`) come before each site's own regexes.
+5. **Location `return`**: redirect, or for `return 410;` and similar, the
+   error handling in step 9.
+6. Methods other than GET and HEAD get `405`.
+7. **Files.** The R2 key is `<host><path>`. The query string is ignored,
+   except on forums.whatwg.org (below).
+   - A path ending in `/` tries the `index` files (default `index.html`) as an
+     internal redirect, which goes through location matching again, as in
+     nginx. With no index file, `fancyindex on` gives a directory listing.
+   - A path without a trailing slash that has no object but has objects under
+     `path/` gets `301` to `path/`, keeping the query string.
+   - `bucket.get(key, { onlyIf: request.headers, range: request.headers })`
+     gives `304`, `412` and `206` responses. Unsatisfiable ranges get `416`.
+   - HEAD gets the same headers and no body.
+8. **Content-Type.** The lowercased extension of the last path segment is
+   looked up in the `types` in effect, then `default_type`: location overrides
+   server overrides http level (`application/octet-stream`). `charset utf-8`
+   appends `; charset=utf-8` only to nginx's default `charset_types`
+   (`text/html`, `text/xml`, `text/plain`, `text/vnd.wap.wml`,
+   `application/javascript`, `application/rss+xml`) and never to a type that
+   already has parameters. The R2 object's own content type is ignored.
+9. **Errors.** If the location has an `error_page` for the status (html.spec
+   `404 /404.html`; whatwg.org `404 /404` and `410 /410`; lists `404 /404`),
+   that URI is served through the normal pipeline with the original status,
+   once (no recursion, like `recursive_error_pages off`). Otherwise an
+   nginx-style default page.
+10. **Headers.** Every response, errors included, gets
+    `Access-Control-Allow-Origin: *`,
+    `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`
+    and `X-Content-Type-Options: nosniff`. `cache.conf` is applied: content
+    types matching `font` or `image/` get `Cache-Control: max-age=604800` and
+    `Expires`, for statuses 200, 201, 204, 206, 301, 302, 303, 304, 307 and
+    308 only. html.spec.whatwg.org/print.pdf also gets
+    `Content-Disposition: inline; filename=html-standard.pdf`.
+
+**forums.whatwg.org** has three special things, which the converter recognizes
+exactly: `location / { index index.php; }`, `location = / { return 301 /bb3/; }`,
+and `location ~ \.php` with an `if` that strips a trailing `&?sid=[a-z0-9]*`
+from the query with a permanent redirect (feature `strip-sid` in hosts.json),
+followed by `try_files "${uri}__${args}" $uri =404`.
+
+**Directory listings** imitate `fancyindex` with
+`fancyindex_css_href https://resources.whatwg.org/nginx-fancyindex-whatwg.css`
+and `fancyindex_exact_size off`: directories first, dotfiles hidden, sort by
+name by default, `/commit-snapshots` by date (newest first) and
+`/review-drafts` by name descending; `?C=N|S|M&O=A|D` changes the sort. File
+dates come from `customMetadata.mtime` (where rclone stores the original
+mtime), falling back to `uploaded`. A subdirectory's date is the newest date
+of anything in it, so a listing lists every object under its prefix (paginated,
+at most `MAX_LIST_CALLS` = 200 calls of 1000 objects). The rendered page is
+cached with the Cache API for 5 minutes.
+
+## nginx is the source of truth (until cutover)
+
+While marquee is live, `debian/marquee/` is the source of truth. After changing
+any of these:
+
+- `debian/marquee/DOMAINS`
+- `debian/marquee/nginx/sites/*.conf`
+- `debian/marquee/nginx/conf/whatwg.conf`, `whatwg-headers.conf`, `cache.conf`
+
+run
+
+```sh
+cd cloudflare
+npm run convert   # node tools/nginx-to-json.mjs
+```
+
+and commit the updated `config/hosts.json`. CI (`.github/workflows/cloudflare.yml`)
+runs `npm run check-config` and fails if `hosts.json` is out of date.
+
+The converter fails on any directive it doesn't know, so a config change that
+the Worker can't reproduce is caught in CI rather than in production. It
+ignores `listen`, `ssl_*` and `gzip*`, which Cloudflare handles.
+`nginx/conf/http.conf` (port 80 and ACME challenges) is not converted:
+Cloudflare's "Always Use HTTPS" replaces it, and certbot, dhparam and fdupes
+aren't needed.
+
+**After cutover**, delete `debian/marquee/`, `tools/nginx-to-json.mjs`,
+`vendor/mime.types` and the converter tests, drop the `check-config` CI step,
+and edit `config/hosts.json` directly.
+
+### `vendor/mime.types`
+
+marquee runs Debian's nginx 1.18 package, which installs `/etc/nginx/mime.types`
+from Debian's own packaging (`debian/conf/mime.types`), not upstream's
+`conf/mime.types`. They differ: Debian's maps `.woff` to `application/font-woff`
+(which production serves; see `test/content-type.mjs`) and has no `woff2`
+entry, while upstream nginx has used `font/woff` since 1.15.x, including
+`release-1.18.0`.
+
+The vendored file was extracted from
+`http://archive.ubuntu.com/ubuntu/pool/main/n/nginx/nginx-common_1.18.0-6ubuntu14_all.deb`
+(SHA-256 `1237fe9680d22fe95adc0983d82ebfe08fad637797ef19fc35d4cb6867658e5d`),
+Ubuntu jammy's package based on Debian's `1.18.0-6`, because deb.debian.org and
+salsa.debian.org aren't reachable from the environment this was built in.
+Ubuntu focal's `nginx-common_1.18.0-0ubuntu1.7` ships an identical file.
+Debian bullseye's `1.18.0-6.1` is expected to be the same but was not checked
+directly; comparing with `/etc/nginx/mime.types` on marquee would settle it.
+
+## Tests
+
+```sh
+cd cloudflare
+npm test             # node --test: unit tests + offline replay
+npm run check-config # hosts.json up to date?
+npm run build        # bundle with the pinned wrangler (dry run)
+```
+
+There are no dependencies; `npm test` only needs Node.js 22 or later.
+`wrangler` is run with `npx` at a pinned version (`4.156.2`) in `package.json`.
+
+**Offline replay.** `test/replay.test.mjs` runs the production test suite
+(`../test/{redirects,content-type,caching,cors,hsts,x-headers}.mjs`) against
+the Worker without a network. It defines mocha's `describe`/`specify` on top of
+`node:test` and replaces global `fetch` with a call into the Worker. The buckets
+are fakes in which every key exists, except keys with a path segment named
+`foo` (the 404 cases). Tests of `http:` URLs (handled by "Always Use HTTPS") and
+of hosts marquee doesn't serve (blog, wiki, participate, build) are skipped, as
+is `certs.mjs`. `../test/` is unchanged.
+
+Result at the time of writing: 315 pass, 0 fail, 99 skipped (90 `http:`,
+9 for other hosts).
+
+## Deploying
+
+There is no Cloudflare account yet, so none of this has been run. The account
+should be in shared custody of the people on admin@whatwg.org.
+
+One-time setup (phase 2/4):
+
+1. Create the R2 buckets `whatwg-sites` and `whatwg-snapshots`.
+2. In the whatwg.org zone, turn on **SSL/TLS → Edge Certificates → Always Use
+   HTTPS** (the `http:` → `https:` 301s, replacing `http.conf`).
+3. Create an API token for deploys (Workers Scripts: Edit, Workers Routes: Edit,
+   Account: Workers R2 Storage: Read) if deploys run from CI.
+
+Staging:
+
+```sh
+npm run deploy:staging
+curl -H 'X-Marquee-Host: dom.spec.whatwg.org' https://marquee-staging.<account>.workers.dev/
+```
+
+`marquee-staging` uses the same buckets (read-only) and takes the host from
+`X-Marquee-Host`. Redirect `Location`s use the real host, as nginx would. Note
+that the Cache API does nothing on `workers.dev`, so listings aren't cached
+there.
+
+Production:
+
+```sh
+npm run deploy
+```
+
+The production Worker has `workers_dev: false` and starts with **no routes**,
+so deploying it serves nothing until hosts are added.
+
+## Cutover (phase 5)
+
+Hosts move one at a time, as Worker
+[Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/).
+Do html.spec.whatwg.org last.
+
+For each host:
+
+1. Make sure R2 has the host's files and that deploys are writing to both
+   marquee and R2 (phase 3).
+2. Test it on staging with `X-Marquee-Host`, and run the production test suite
+   against the staging Worker if useful.
+3. Add the host to `routes` in `wrangler.jsonc`:
+   ```jsonc
+   "routes": [
+     { "pattern": "dom.spec.whatwg.org", "custom_domain": true }
+   ]
+   ```
+   and deploy. Cloudflare creates the DNS record and certificate for a Custom
+   Domain, replacing the DNS-only record that points at marquee. (If a DNS
+   record for the host already exists, Cloudflare may ask for it to be deleted
+   first.)
+4. Run `npm test` in `../test/` against production.
+
+**Rollback:** remove the entry from `routes` and deploy (or detach the Custom
+Domain in the dashboard), then restore the DNS-only A/AAAA record pointing at
+marquee. marquee keeps serving until phase 6.
+
+## Deploy scripts (phase 3, not done here)
+
+Today three places deploy to marquee with rsync over ssh using the `MARQUEE_*`
+secrets. In phase 3 they write to R2 too, with the AWS CLI or rclone against
+the R2 S3 endpoint and organization secrets `R2_*`:
+
+- **whatwg/whatwg.org `deploy.sh`** uses `rsync --delete` for whatwg.org and
+  other sites, including lists.whatwg.org (~88k files) and forums.whatwg.org
+  (~4k files). Equivalent: sync each host to `whatwg-sites/<host>/` with delete.
+- **`resources.whatwg.org/build/deploy.sh`** (every Bikeshed spec, via the
+  spec-factory workflows) syncs without `--delete`, and adds
+  `commit-snapshots/<sha>/` and `review-drafts/<name>/`. Equivalent: sync the
+  spec to `whatwg-sites/<host>/` without delete, and the snapshot directories
+  to `whatwg-snapshots/<host>/…`.
+- **whatwg/html's workflow** syncs with `--delete` but excludes
+  `commit-snapshots` and `review-drafts`, then syncs those separately.
+  Equivalent: the same split between the two buckets.
+
+Directory listing dates rely on `customMetadata.mtime`. rclone sets it;
+`aws s3 sync` does not, so with the AWS CLI dates are upload times. Either use
+rclone for deploys too, or accept upload times (for commit snapshots they are
+nearly the same thing).
+
+## Differences from nginx
+
+Intentional or unavoidable differences:
+
+1. **print.pdf keeps the standard headers.** In nginx, an `add_header` in a
+   location drops all inherited `add_header`s, so production serves
+   html.spec.whatwg.org/print.pdf without CORS, HSTS or nosniff. The Worker
+   adds the location's `Content-Disposition` on top of the standard headers.
+2. **HTTP → HTTPS** is done by Cloudflare's "Always Use HTTPS", not by the
+   Worker. TLS, HTTP/2/3 and compression are Cloudflare's, so TLS versions,
+   ciphers and `Content-Encoding` differ.
+3. **ETag** is R2's (an MD5 or multipart hash), not nginx's `"mtime-size"`.
+   Every ETag changes once at cutover.
+4. **Last-Modified** is the rclone mtime (else the upload time). R2 evaluates
+   `If-Modified-Since` against the upload time, so a request with only
+   `If-Modified-Since` usually gets `200` rather than `304`. `If-None-Match`
+   works normally, and browsers send both.
+5. **Multiple ranges** (`Range: bytes=0-1,5-6`) get the whole object with
+   `200` instead of `multipart/byteranges`.
+6. **Directory listings** imitate fancyindex's markup, not byte for byte.
+   Directory dates are the newest date of anything inside (nginx shows the
+   directory's mtime). Listings are cached for 5 minutes. A directory with
+   more than 200,000 objects below it shows `-` for the dates of
+   subdirectories past that point; they sort as oldest. The root listing of a
+   host without `index.html` shows `commit-snapshots/` and `review-drafts/`
+   without dates. Empty directories don't exist in R2, so they are `404`
+   instead of an empty listing.
+7. **Location headers and `$request_uri`.** `$request_uri` comes from the URL
+   as Workers parsed it, which has dot segments resolved and some characters
+   percent-encoded, where nginx uses the raw request line. Location values
+   with spaces or non-ASCII are percent-encoded; nginx sends raw bytes.
+8. **Paths with invalid UTF-8** (after decoding) can't name an R2 key, so they
+   get `404`. nginx could serve such file names from disk.
+9. **Methods.** nginx answers a POST to a missing file with `404` and to an
+   existing one with `405`; the Worker answers `405` either way. Redirects
+   apply to every method in both.
+10. **Default error pages** end with `nginx` instead of `nginx/1.18.0`, and
+    there is no `Server: nginx` header (Cloudflare sends `Server: cloudflare`).
+11. **Unknown hosts** get `421`. With Custom Domains, only configured hosts
+    reach the Worker.
+12. **No edge caching of files.** The Worker runs in front of Cloudflare's
+    cache, so every file request reads from R2 (with the same `Cache-Control`
+    as nginx for browsers). This could be added with the Cache API later.
+
+## Migration plan
+
+- **Phase 0:** inventory marquee (logical size with hard links counted, file
+  counts, traffic).
+- **Phase 1 (this directory):** the Worker.
+- **Phase 2:** create the buckets. Put a bucket lock on `whatwg-snapshots` so
+  snapshots are write-once. Bulk-copy with rclone, keeping mtimes. Check how
+  rclone should treat symlinks and hard links on marquee.
+- **Phase 3:** deploys write to both marquee and R2.
+- **Phase 4:** move the whatwg.org DNS zone from DigitalOcean to Cloudflare
+  with DNS-only records. Test the staging Worker.
+- **Phase 5:** cut over one host at a time, html.spec last.
+- **Phase 6:** decommission marquee.
+
+## Open questions
+
+- Whether Worker Custom Domains get certificates for two-level hostnames like
+  `dom.spec.whatwg.org`. Universal SSL only covers `whatwg.org` and
+  `*.whatwg.org`; Custom Domains are supposed to issue their own certificate
+  per hostname, but this needs checking on the real account (otherwise:
+  Advanced Certificate Manager for `*.spec.whatwg.org` and
+  `*.idea.whatwg.org`).
+- The Cloudflare account doesn't exist yet. It should be in shared custody of
+  the people on admin@whatwg.org. DigitalOcean (current DNS) and registrar
+  access exist, so the zone move in phase 4 isn't blocked on access.
+- Per-request limits on R2 operations for large listings
+  (`/commit-snapshots/` on html.spec.whatwg.org has thousands of snapshot
+  directories). `MAX_LIST_CALLS` may need tuning, or listings could be
+  precomputed at deploy time.
+- Whether Debian bullseye's `mime.types` is identical to the vendored one
+  (see above).

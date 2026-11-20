@@ -1,0 +1,29 @@
+name: Cloudflare Worker
+on:
+  pull_request:
+    branches:
+    - main
+  push:
+    branches:
+    - main
+  workflow_dispatch:
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cloudflare
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: lts/*
+    - name: Check that config/hosts.json matches the nginx config
+      run: npm run check-config
+    - name: Unit tests and offline replay of test/
+      run: npm test
+    - name: Bundle with wrangler (dry run)
+      run: npm run build
+      env:
+        WRANGLER_SEND_METRICS: false

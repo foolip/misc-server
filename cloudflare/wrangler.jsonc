@@ -1,0 +1,35 @@
+// Wrangler configuration for the marquee Worker. Use the wrangler version
+// pinned in package.json (npm run deploy / npm run deploy:staging).
+{
+  "name": "marquee",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-10-01",
+
+  // Production. Hosts are added here one at a time during cutover, as
+  // Custom Domains, for example:
+  //   { "pattern": "dom.spec.whatwg.org", "custom_domain": true }
+  // See README.md. Removing an entry and deploying is the rollback.
+  "workers_dev": false,
+  "routes": [],
+  "r2_buckets": [
+    { "binding": "SITES", "bucket_name": "whatwg-sites" },
+    { "binding": "SNAPSHOTS", "bucket_name": "whatwg-snapshots" }
+  ],
+  "observability": { "enabled": true },
+
+  "env": {
+    // Staging: marquee-staging.<account>.workers.dev. The target host comes
+    // from the X-Marquee-Host request header. Bindings are not inherited by
+    // environments, so they are repeated here.
+    "staging": {
+      "name": "marquee-staging",
+      "workers_dev": true,
+      "routes": [],
+      "vars": { "ALLOW_HOST_HEADER": "true" },
+      "r2_buckets": [
+        { "binding": "SITES", "bucket_name": "whatwg-sites" },
+        { "binding": "SNAPSHOTS", "bucket_name": "whatwg-snapshots" }
+      ]
+    }
+  }
+}

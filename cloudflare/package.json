@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "convert": "node tools/nginx-to-json.mjs",
+    "check-config": "node tools/nginx-to-json.mjs --check",
+    "test": "node --test \"test/**/*.test.mjs\"",
+    "build": "npx --yes wrangler@4.156.2 deploy --env=\"\" --dry-run --outdir dist",
+    "deploy": "npx --yes wrangler@4.156.2 deploy --env=\"\"",
+    "deploy:staging": "npx --yes wrangler@4.156.2 deploy --env staging"
+  }
+}
