@@ -188,6 +188,31 @@ is `certs.mjs`. `../test/` is unchanged.
 Result at the time of writing: 315 pass, 0 fail, 99 skipped (90 `http:`,
 9 for other hosts).
 
+## Trying it locally
+
+`wrangler dev` runs the Worker in workerd with local R2 buckets, so it can be
+tried without a Cloudflare account. `tools/try-local.mjs` fills local R2 with a
+sample of production and compares the two:
+
+```sh
+cd cloudflare
+npm run local:seed     # copy ~180 production files into local R2 (.wrangler/state)
+npm run dev            # wrangler dev --env staging, on http://localhost:8787
+# in another terminal:
+npm run local:compare  # request ~600 URLs from production and locally, diff them
+curl -i -H 'X-Marquee-Host: dom.spec.whatwg.org' http://localhost:8787/commit-snapshots/
+```
+
+The sample is every `https:` URL in `../test/*.mjs` for a host the Worker
+serves, the error pages, print.pdf, forums.whatwg.org/bb3/, and the three
+newest commit snapshots and review drafts of dom and url. `local:compare` also
+requests each URL with `/foo` appended, and compares the status and the
+`Location`, `Content-Type`, `Cache-Control`, `Content-Disposition`, CORS, HSTS
+and nosniff headers. Expect print.pdf to differ (see
+[Differences from nginx](#differences-from-nginx)), and anything not in the
+sample to be `404` locally. Local R2 has no rclone mtimes, so listing dates are
+seeding times.
+
 ## Deploying
 
 There is no Cloudflare account yet, so none of this has been run. The account
