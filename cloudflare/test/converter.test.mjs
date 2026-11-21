@@ -88,3 +88,15 @@ test('cache.conf becomes expires rules', () => {
     ],
   });
 });
+
+test('config/lock-rules.json is up to date and covers every file-serving host', async () => {
+  const { render: renderRules, lockRules } = await import('../tools/lock-rules.mjs');
+  const config = convert(real);
+  const actual = fs.readFileSync(new URL('../config/lock-rules.json', import.meta.url), 'utf8');
+  assert.equal(actual, renderRules(config), 'run `npm run lock-rules` in cloudflare/');
+  const { rules } = lockRules(config);
+  assert.equal(rules.length, 2 * 32);
+  assert.ok(rules.length <= 1000, 'R2 allows at most 1,000 lock rules per bucket');
+  assert.ok(rules.some(r => r.prefix === 'html.spec.whatwg.org/commit-snapshots/'));
+  assert.ok(rules.some(r => r.prefix === 'dom.spec.whatwg.org/review-drafts/'));
+});

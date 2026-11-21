@@ -1,7 +1,7 @@
 # marquee on Cloudflare
 
 This directory replaces the "marquee" nginx droplet (`debian/marquee/`) with a
-Cloudflare Worker in front of two R2 buckets. See
+Cloudflare Worker in front of one R2 bucket. See
 [whatwg/misc-server#107](https://github.com/whatwg/misc-server/issues/107).
 
 This is phase 1 of the migration (see [Migration plan](#migration-plan)). Nothing
@@ -10,21 +10,34 @@ here is deployed yet, because there is no Cloudflare account yet.
 ## Architecture
 
 ```
-            ┌──────────────────────────── Cloudflare ────────────────────────────┐
- browser ──▶│ Always Use HTTPS ─▶ Worker "marquee" ─┬─▶ R2 whatwg-sites          │
-            │  (TLS, compression)  (src/, hosts.json)└─▶ R2 whatwg-snapshots      │
-            └─────────────────────────────────────────────────────────────────────┘
+            ┌──────────────────────────── Cloudflare ─────────────────────────────┐
+ browser ──▶│ Always Use HTTPS ─▶ Worker "marquee" ──────▶ R2 bucket whatwg-sites │
+            │  (TLS, compression)  (src/, hosts.json)                             │
+            └──────────────────────────────────────────────────────────────────────┘
 ```
 
 - **One Worker** (`marquee`) serves all 49 hosts in `debian/marquee/DOMAINS`.
   17 of them only redirect; the other 32 serve files.
-- **R2 `whatwg-sites`** holds every site's files at `<host>/<path>`, for
-  example `dom.spec.whatwg.org/index.html`.
-- **R2 `whatwg-snapshots`** holds `<host>/commit-snapshots/…` and
-  `<host>/review-drafts/…`. These are write-once, so this bucket gets a bucket
-  lock in phase 2. Requests for `/commit-snapshots` and `/review-drafts` (and
-  anything under them) read from this bucket; everything else reads from
-  `whatwg-sites`.
+- **One R2 bucket, `whatwg-sites`** (binding `BUCKET`), holds every host's
+  files at `<host>/<path>`, mirroring marquee's `/var/www/<host>/<path>`:
+  ```
+  whatwg.org/index.html
+  whatwg.org/404
+  dom.spec.whatwg.org/index.html
+  dom.spec.whatwg.org/commit-snapshots/<sha>/index.html
+  dom.spec.whatwg.org/review-drafts/2024-06/index.html
+  html.spec.whatwg.org/multipage/parsing.html
+  forums.whatwg.org/bb3/viewtopic.php__f=3&p=8538
+  ```
+  The redirect-only hosts have no objects. R2 has no directories: a directory
+  exists if any key starts with `<host>/<dir>/`.
+- **Snapshots are write-once.** `config/lock-rules.json` has an R2
+  [bucket lock](https://developers.cloudflare.com/r2/buckets/bucket-locks/)
+  rule with indefinite retention for `<host>/commit-snapshots/` and
+  `<host>/review-drafts/` of every host that serves files (64 rules; the limit
+  is 1,000). Locked objects can't be overwritten or deleted. R2 can't lock
+  individual objects, only prefixes, which is why there is one rule per host.
+  See [Snapshot lock rules](#snapshot-lock-rules).
 - **`config/hosts.json`** describes each host: redirects, `location` blocks,
   content types, error pages and headers. It is generated from the nginx
   config by `tools/nginx-to-json.mjs`.
@@ -34,17 +47,20 @@ Files:
 | Path | What |
 | --- | --- |
 | `wrangler.jsonc` | Worker config: R2 bindings, staging env, production routes |
-| `src/index.mjs` | Worker entry point; passes the buckets and cache to the handler |
+| `src/index.mjs` | Worker entry point; passes the bucket and cache to the handler |
 | `src/handler.mjs` | Request handling (redirects, files, error pages, headers) |
 | `src/locations.mjs` | nginx `location` matching |
 | `src/path.mjs` | URI decoding/normalization, extensions, escaping |
 | `src/listing.mjs` | fancyindex-style directory listings |
 | `tools/nginx-to-json.mjs` | nginx → `config/hosts.json` converter |
 | `config/hosts.json` | Generated config (committed) |
+| `tools/lock-rules.mjs` | `config/hosts.json` → `config/lock-rules.json` |
+| `config/lock-rules.json` | Generated R2 lock rules for snapshots (committed) |
+| `tools/try-local.mjs` | Seed local R2 from production and compare (see below) |
 | `vendor/mime.types` | The `mime.types` marquee uses (see below) |
 | `test/*.test.mjs` | Unit tests and the offline replay of `../test/` |
 
-The handler takes the buckets and cache as arguments, so all of it runs under
+The handler takes the bucket and cache as arguments, so all of it runs under
 Node in tests with in-memory fakes.
 
 ### Request handling
@@ -129,11 +145,11 @@ run
 
 ```sh
 cd cloudflare
-npm run convert   # node tools/nginx-to-json.mjs
+npm run convert   # writes config/hosts.json and config/lock-rules.json
 ```
 
-and commit the updated `config/hosts.json`. CI (`.github/workflows/cloudflare.yml`)
-runs `npm run check-config` and fails if `hosts.json` is out of date.
+and commit the updated files. CI (`.github/workflows/cloudflare.yml`) runs
+`npm run check-config` and fails if either is out of date.
 
 The converter fails on any directive it doesn't know, so a config change that
 the Worker can't reproduce is caught in CI rather than in production. It
@@ -143,8 +159,9 @@ Cloudflare's "Always Use HTTPS" replaces it, and certbot, dhparam and fdupes
 aren't needed.
 
 **After cutover**, delete `debian/marquee/`, `tools/nginx-to-json.mjs`,
-`vendor/mime.types` and the converter tests, drop the `check-config` CI step,
-and edit `config/hosts.json` directly.
+`vendor/mime.types` and the converter tests, and edit `config/hosts.json`
+directly. Keep `tools/lock-rules.mjs` and its check, generating the rules from
+`hosts.json`.
 
 ### `vendor/mime.types`
 
@@ -179,8 +196,8 @@ There are no dependencies; `npm test` only needs Node.js 22 or later.
 **Offline replay.** `test/replay.test.mjs` runs the production test suite
 (`../test/{redirects,content-type,caching,cors,hsts,x-headers}.mjs`) against
 the Worker without a network. It defines mocha's `describe`/`specify` on top of
-`node:test` and replaces global `fetch` with a call into the Worker. The buckets
-are fakes in which every key exists, except keys with a path segment named
+`node:test` and replaces global `fetch` with a call into the Worker. The bucket
+is a fake in which every key exists, except keys with a path segment named
 `foo` (the 404 cases). Tests of `http:` URLs (handled by "Always Use HTTPS") and
 of hosts marquee doesn't serve (blog, wiki, participate, build) are skipped, as
 is `certs.mjs`. `../test/` is unchanged.
@@ -190,7 +207,7 @@ Result at the time of writing: 315 pass, 0 fail, 99 skipped (90 `http:`,
 
 ## Trying it locally
 
-`wrangler dev` runs the Worker in workerd with local R2 buckets, so it can be
+`wrangler dev` runs the Worker in workerd with a local R2 bucket, so it can be
 tried without a Cloudflare account. `tools/try-local.mjs` fills local R2 with a
 sample of production and compares the two:
 
@@ -220,7 +237,9 @@ should be in shared custody of the people on admin@whatwg.org.
 
 One-time setup (phase 2/4):
 
-1. Create the R2 buckets `whatwg-sites` and `whatwg-snapshots`.
+1. Create the R2 bucket `whatwg-sites` and apply the lock rules
+   (`npm run lock-rules:apply`, see [Snapshot lock rules](#snapshot-lock-rules))
+   before copying any snapshots into it.
 2. In the whatwg.org zone, turn on **SSL/TLS → Edge Certificates → Always Use
    HTTPS** (the `http:` → `https:` 301s, replacing `http.conf`).
 3. Create an API token for deploys (Workers Scripts: Edit, Workers Routes: Edit,
@@ -233,7 +252,7 @@ npm run deploy:staging
 curl -H 'X-Marquee-Host: dom.spec.whatwg.org' https://marquee-staging.<account>.workers.dev/
 ```
 
-`marquee-staging` uses the same buckets (read-only) and takes the host from
+`marquee-staging` uses the same bucket (read-only) and takes the host from
 `X-Marquee-Host`. Redirect `Location`s use the real host, as nginx would. Note
 that the Cache API does nothing on `workers.dev`, so listings aren't cached
 there.
@@ -287,16 +306,57 @@ the R2 S3 endpoint and organization secrets `R2_*`:
 - **`resources.whatwg.org/build/deploy.sh`** (every Bikeshed spec, via the
   spec-factory workflows) syncs without `--delete`, and adds
   `commit-snapshots/<sha>/` and `review-drafts/<name>/`. Equivalent: sync the
-  spec to `whatwg-sites/<host>/` without delete, and the snapshot directories
-  to `whatwg-snapshots/<host>/…`.
+  spec to `whatwg-sites/<host>/` without delete, and upload the snapshot
+  directories without overwriting existing objects (below).
 - **whatwg/html's workflow** syncs with `--delete` but excludes
   `commit-snapshots` and `review-drafts`, then syncs those separately.
-  Equivalent: the same split between the two buckets.
+  Equivalent: the same, and the excludes are now required: deleting a locked
+  object fails, which would fail the sync.
 
 Directory listing dates rely on `customMetadata.mtime`. rclone sets it;
 `aws s3 sync` does not, so with the AWS CLI dates are upload times. Either use
 rclone for deploys too, or accept upload times (for commit snapshots they are
 nearly the same thing).
+
+Uploads under the locked prefixes must skip keys that already exist, because
+an overwrite fails even if the content is identical. That happens when a
+deploy is re-run for the same commit, or if a deploy rebuilds existing review
+drafts (to check in `deploy.sh`). Use `rclone copy --ignore-existing`, or
+`If-None-Match: *` on each PutObject, which R2 supports
+([conditional operations](https://developers.cloudflare.com/r2/api/s3/conditional-operations/))
+and which fails with `412` instead of overwriting.
+
+## Snapshot lock rules
+
+`npm run lock-rules` (also run by `npm run convert`) writes
+`config/lock-rules.json` from `config/hosts.json`: two rules per host that
+serves files, for example
+
+```json
+{"id":"dom.spec.whatwg.org-commit-snapshots","enabled":true,"prefix":"dom.spec.whatwg.org/commit-snapshots/","condition":{"type":"Indefinite"}}
+```
+
+CI checks that the file is up to date, so adding a host to `DOMAINS` (or, after
+cutover, to `hosts.json`) without regenerating the rules fails CI. Apply them
+with
+
+```sh
+npm run lock-rules:apply   # wrangler r2 bucket lock set whatwg-sites --file config/lock-rules.json
+```
+
+which replaces all lock rules on the bucket, so the committed file is the
+complete set. Run it whenever the file changes, before deploying snapshots for
+a new host.
+
+Things to know about the locks:
+
+- They apply to existing objects as well as new ones, and take precedence over
+  lifecycle rules.
+- A bad snapshot can't be fixed or removed until someone with admin access
+  disables its rule. The rules are not a compliance lock: an account admin can
+  remove them. Deploy tokens should be R2 object read/write tokens, which (to
+  be verified on the real account) can't change bucket settings.
+- A bucket with lock rules can't be emptied.
 
 ## Differences from nginx
 
@@ -321,9 +381,7 @@ Intentional or unavoidable differences:
    Directory dates are the newest date of anything inside (nginx shows the
    directory's mtime). Listings are cached for 5 minutes. A directory with
    more than 200,000 objects below it shows `-` for the dates of
-   subdirectories past that point; they sort as oldest. The root listing of a
-   host without `index.html` shows `commit-snapshots/` and `review-drafts/`
-   without dates. Empty directories don't exist in R2, so they are `404`
+   subdirectories past that point; they sort as oldest. Empty directories don't exist in R2, so they are `404`
    instead of an empty listing.
 7. **Location headers and `$request_uri`.** `$request_uri` comes from the URL
    as Workers parsed it, which has dot segments resolved and some characters
@@ -347,7 +405,7 @@ Intentional or unavoidable differences:
 - **Phase 0:** inventory marquee (logical size with hard links counted, file
   counts, traffic).
 - **Phase 1 (this directory):** the Worker.
-- **Phase 2:** create the buckets. Put a bucket lock on `whatwg-snapshots` so
+- **Phase 2:** create the bucket and apply `config/lock-rules.json` so
   snapshots are write-once. Bulk-copy with rclone, keeping mtimes. Check how
   rclone should treat symlinks and hard links on marquee.
 - **Phase 3:** deploys write to both marquee and R2.
@@ -371,5 +429,8 @@ Intentional or unavoidable differences:
   (`/commit-snapshots/` on html.spec.whatwg.org has thousands of snapshot
   directories). `MAX_LIST_CALLS` may need tuning, or listings could be
   precomputed at deploy time.
+- Whether R2 lock rules accept these rule IDs (host name plus directory, up
+  to 46 characters) and whether `wrangler dev`'s local R2 enforces locks
+  (probably not, so locks can only be tested on the real account).
 - Whether Debian bullseye's `mime.types` is identical to the vendored one
   (see above).

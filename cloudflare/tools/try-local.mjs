@@ -78,10 +78,6 @@ function keyFor(url) {
   return url.hostname + p;
 }
 
-function bucketFor(key) {
-  return /^[^/]+\/(commit-snapshots|review-drafts)\//.test(key) ? 'whatwg-snapshots' : 'whatwg-sites';
-}
-
 async function snapshotUrls() {
   const urls = [];
   for (const host of SNAPSHOT_HOSTS) {
@@ -101,7 +97,7 @@ async function snapshotUrls() {
 async function seed() {
   fs.mkdirSync(SEED_DIR, { recursive: true });
   const urls = [...testUrls(), ...EXTRA_URLS.map(u => new URL(u)), ...await snapshotUrls()];
-  const entries = { 'whatwg-sites': [], 'whatwg-snapshots': [] };
+  const entries = { 'whatwg-sites': [] };
   const seen = new Set();
   await pool(urls, 8, async url => {
     const key = keyFor(url);
@@ -115,7 +111,7 @@ async function seed() {
     const bytes = Buffer.from(await r.arrayBuffer());
     const file = path.join(SEED_DIR, crypto.createHash('sha256').update(key).digest('hex'));
     fs.writeFileSync(file, bytes);
-    entries[bucketFor(key)].push({ key, file });
+    entries['whatwg-sites'].push({ key, file });
     console.log(`${r.status} ${url.href} -> ${key}`);
   });
   for (const [bucket, list] of Object.entries(entries)) {
@@ -127,7 +123,7 @@ async function seed() {
       stdio: 'inherit',
     });
   }
-  console.log(`\nSeeded ${entries['whatwg-sites'].length} + ${entries['whatwg-snapshots'].length} objects. Now run: npm run dev`);
+  console.log(`\nSeeded ${entries['whatwg-sites'].length} objects. Now run: npm run dev`);
 }
 
 const COMPARED_HEADERS = [

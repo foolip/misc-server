@@ -12,8 +12,7 @@
   "workers_dev": false,
   "routes": [],
   "r2_buckets": [
-    { "binding": "SITES", "bucket_name": "whatwg-sites" },
-    { "binding": "SNAPSHOTS", "bucket_name": "whatwg-snapshots" }
+    { "binding": "BUCKET", "bucket_name": "whatwg-sites" }
   ],
   "observability": { "enabled": true },
 
@@ -27,8 +26,7 @@
       "routes": [],
       "vars": { "ALLOW_HOST_HEADER": "true" },
       "r2_buckets": [
-        { "binding": "SITES", "bucket_name": "whatwg-sites" },
-        { "binding": "SNAPSHOTS", "bucket_name": "whatwg-snapshots" }
+        { "binding": "BUCKET", "bucket_name": "whatwg-sites" }
       ]
     }
   }

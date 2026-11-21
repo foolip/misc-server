@@ -4,14 +4,13 @@ import config from '../config/hosts.json' with { type: 'json' };
 import { handle } from '../src/handler.mjs';
 import { MemoryBucket, MemoryCache } from './helpers/memory-bucket.mjs';
 
-function setup(siteFiles = {}, snapshotFiles = []) {
-  const sites = new MemoryBucket(siteFiles);
-  const snapshots = new MemoryBucket();
-  for (const [key, value, mtime] of snapshotFiles) snapshots.put(key, value, { mtime });
+function setup(files = {}, filesWithMtime = []) {
+  const bucket = new MemoryBucket(files);
+  for (const [key, value, mtime] of filesWithMtime) bucket.put(key, value, { mtime });
   const cache = new MemoryCache();
-  const deps = { config, sites, snapshots, cache };
+  const deps = { config, bucket, cache };
   const fetch = (url, init = {}) => handle(new Request(url, init), deps);
-  return { sites, snapshots, cache, deps, fetch };
+  return { bucket, cache, deps, fetch };
 }
 
 const STANDARD = {
@@ -27,7 +26,7 @@ function assertStandardHeaders(response) {
 }
 
 describe('files', () => {
-  test('serves from SITES with host/path keys', async () => {
+  test('serves host/path keys', async () => {
     const { fetch } = setup({ 'dom.spec.whatwg.org/index.html': 'dom' });
     const r = await fetch('https://dom.spec.whatwg.org/');
     assert.equal(r.status, 200);
@@ -50,7 +49,7 @@ describe('files', () => {
     assert.equal(r.status, 200);
   });
 
-  test('snapshots come from SNAPSHOTS', async () => {
+  test('snapshots are in the same bucket', async () => {
     const { fetch } = setup({}, [['dom.spec.whatwg.org/commit-snapshots/abc/index.html', 'snap']]);
     const r = await fetch('https://dom.spec.whatwg.org/commit-snapshots/abc/');
     assert.equal(r.status, 200);
@@ -140,8 +139,8 @@ describe('files', () => {
   });
 
   test('Last-Modified comes from rclone mtime metadata', async () => {
-    const { sites, fetch } = setup();
-    sites.put('dom.spec.whatwg.org/a.txt', 'x', { mtime: '2015-05-05T05:05:05.123Z' });
+    const { bucket, fetch } = setup();
+    bucket.put('dom.spec.whatwg.org/a.txt', 'x', { mtime: '2015-05-05T05:05:05.123Z' });
     const r = await fetch('https://dom.spec.whatwg.org/a.txt');
     assert.equal(r.headers.get('last-modified'), 'Tue, 05 May 2015 05:05:05 GMT');
   });
@@ -268,11 +267,11 @@ describe('error pages', () => {
     assert.equal(await r.text(), 'html 404');
   });
   test('missing error page falls back without recursion', async () => {
-    const { sites, fetch } = setup();
+    const { bucket, fetch } = setup();
     const r = await fetch('https://whatwg.org/missing');
     assert.equal(r.status, 404);
     assert.match(await r.text(), /404 Not Found/);
-    assert.equal(sites.calls.filter(([op, key]) => op === 'get' && key === 'whatwg.org/404').length, 1);
+    assert.equal(bucket.calls.filter(([op, key]) => op === 'get' && key === 'whatwg.org/404').length, 1);
   });
   test('error pages ignore conditionals', async () => {
     const { fetch } = setup({ 'whatwg.org/404': 'custom 404' });
@@ -352,14 +351,14 @@ describe('listings', () => {
   test('paginates and caches', async () => {
     const files = {};
     for (let i = 0; i < 2500; i++) files[`dom.spec.whatwg.org/big/f${i}.txt`] = 'x';
-    const { sites, cache, fetch } = setup(files);
+    const { bucket, cache, fetch } = setup(files);
     const html = await (await fetch('https://dom.spec.whatwg.org/big/')).text();
     assert.ok(html.includes('f2499.txt'));
-    assert.equal(sites.calls.filter(([op]) => op === 'list').length, 3);
+    assert.equal(bucket.calls.filter(([op]) => op === 'list').length, 3);
     assert.equal(cache.entries.size, 1);
-    sites.calls.length = 0;
+    bucket.calls.length = 0;
     await fetch('https://dom.spec.whatwg.org/big/');
-    assert.equal(sites.calls.filter(([op]) => op === 'list').length, 0);
+    assert.equal(bucket.calls.filter(([op]) => op === 'list').length, 0);
   });
 
   test('nonexistent directory is 404', async () => {

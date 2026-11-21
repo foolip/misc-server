@@ -2,14 +2,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "convert": "node tools/nginx-to-json.mjs",
-    "check-config": "node tools/nginx-to-json.mjs --check",
+    "convert": "node tools/nginx-to-json.mjs && node tools/lock-rules.mjs",
+    "check-config": "node tools/nginx-to-json.mjs --check && node tools/lock-rules.mjs --check",
     "test": "node --test \"test/**/*.test.mjs\"",
     "build": "npx --yes wrangler@4.156.2 deploy --env=\"\" --dry-run --outdir dist",
     "deploy": "npx --yes wrangler@4.156.2 deploy --env=\"\"",
     "deploy:staging": "npx --yes wrangler@4.156.2 deploy --env staging",
     "dev": "npx --yes wrangler@4.156.2 dev --env staging",
     "local:seed": "node tools/try-local.mjs seed",
-    "local:compare": "node tools/try-local.mjs compare"
+    "local:compare": "node tools/try-local.mjs compare",
+    "lock-rules": "node tools/lock-rules.mjs",
+    "lock-rules:apply": "npx --yes wrangler@4.156.2 r2 bucket lock set whatwg-sites --file config/lock-rules.json"
   }
 }

@@ -5,8 +5,7 @@
 //
 //   handle(request, {
 //     config,          // config/hosts.json
-//     sites,           // R2 bucket (or fake) for site files
-//     snapshots,       // R2 bucket (or fake) for commit-snapshots/review-drafts
+//     bucket,          // R2 bucket (or fake) with all files, keyed <host><path>
 //     cache,           // optional Cache API object, used for listings
 //     waitUntil,       // optional ctx.waitUntil
 //     allowHostHeader, // staging: take the host from X-Marquee-Host
@@ -17,7 +16,6 @@ import { findLocation } from './locations.mjs';
 import { collectEntries, sortEntries, sortFromQuery, renderListing, objectDate } from './listing.mjs';
 
 export const HOST_HEADER = 'X-Marquee-Host';
-export const SNAPSHOT_DIRS = ['/commit-snapshots', '/review-drafts'];
 export const LISTING_CACHE_SECONDS = 300;
 
 // Statuses for which nginx applies `expires` and non-`always` add_header.
@@ -90,13 +88,6 @@ function setting(ctx, location, name) {
   return ctx.config.http[name];
 }
 
-function bucketFor(ctx, uri) {
-  for (const dir of SNAPSHOT_DIRS) {
-    if (uri === dir || uri.startsWith(dir + '/')) return ctx.deps.snapshots;
-  }
-  return ctx.deps.sites;
-}
-
 function keyFor(ctx, uri) {
   return ctx.host + uri;
 }
@@ -139,7 +130,7 @@ async function processUri(ctx, uri, state) {
 
   if (uri.endsWith('/')) {
     const index = setting(ctx, location, 'index') ?? ['index.html'];
-    const bucket = bucketFor(ctx, uri);
+    const bucket = ctx.deps.bucket;
     for (const name of index) {
       if (await bucket.head(keyFor(ctx, uri + name))) {
         return processUri(ctx, uri + name, state);
@@ -259,7 +250,7 @@ function applyHeaders(ctx, location, status, type, headers) {
 // if it doesn't exist.
 async function serveFile(ctx, uri, state, { fallthrough = false } = {}) {
   const { location } = findLocation(ctx.hostConf, uri);
-  const bucket = bucketFor(ctx, uri);
+  const bucket = ctx.deps.bucket;
   const key = keyFor(ctx, uri);
   const request = ctx.request;
   // Error pages are served without conditionals or ranges, as in nginx.
@@ -370,18 +361,7 @@ async function listing(ctx, uri, location, state) {
     if (hit) html = await hit.text();
   }
   if (html === null) {
-    const bucket = bucketFor(ctx, uri);
-    let entries = await collectEntries(bucket, keyFor(ctx, uri));
-    if (uri === '/') {
-      // The snapshot directories live in the other bucket.
-      for (const dir of SNAPSHOT_DIRS) {
-        const r = await ctx.deps.snapshots.list({ prefix: keyFor(ctx, dir + '/'), limit: 1 });
-        if (r.objects.length) {
-          entries ??= [];
-          entries.push({ name: dir.slice(1), dir: true, size: null, date: null });
-        }
-      }
-    }
+    const entries = await collectEntries(ctx.deps.bucket, keyFor(ctx, uri));
     if (!entries) return error(ctx, location, 404, state);
     html = renderListing(uri, sortEntries(entries, sort), {
       cssHref: setting(ctx, location, 'fancyindexCssHref'),

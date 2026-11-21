@@ -38,8 +38,7 @@ class EverythingBucket {
 
 const deps = {
   config,
-  sites: new EverythingBucket(),
-  snapshots: new EverythingBucket(),
+  bucket: new EverythingBucket(),
 };
 
 globalThis.fetch = async (url, init) => handle(new Request(url, init), deps);

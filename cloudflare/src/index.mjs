@@ -7,8 +7,7 @@ export default {
   async fetch(request, env, ctx) {
     return handle(request, {
       config,
-      sites: env.SITES,
-      snapshots: env.SNAPSHOTS,
+      bucket: env.BUCKET,
       cache: caches.default,
       waitUntil: p => ctx.waitUntil(p),
       // Only the staging environment sets this. Production ignores the

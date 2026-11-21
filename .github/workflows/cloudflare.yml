@@ -19,7 +19,7 @@ jobs:
     - uses: actions/setup-node@v4
       with:
         node-version: lts/*
-    - name: Check that config/hosts.json matches the nginx config
+    - name: Check that config/ matches the nginx config
       run: npm run check-config
     - name: Unit tests and offline replay of test/
       run: npm test
