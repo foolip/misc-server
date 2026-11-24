@@ -371,7 +371,18 @@ branch deploy when a repository has none. Protecting `main` is what makes
 "merged to `main`" mean "reviewed", so the script refuses a repository unless
 `main` has a ruleset requiring pull requests (`REQUIRE_RULESET=0` skips that
 check, for testing in a fork). Converting the whatwg repositories from classic
-branch protection to rulesets is part of the migration.
+branch protection to rulesets is part of the migration:
+
+```sh
+DELETE_CLASSIC=1 cloudflare/tools/setup-main-ruleset.sh whatwg/dom whatwg/fetch …
+```
+
+creates or updates a ruleset named `main` on the default branch: no deletion,
+linear history, a pull request with 1 approval, the `Participation` and `Build`
+checks passing, and no bypass. It skips a repository whose default branch
+doesn't report both checks (every PR there would be blocked; `FORCE=1`
+overrides), and only deletes the classic protection after checking the ruleset
+is in effect.
 
 Workflows use the environment only for pushes to `main`, so PR builds still
 run without it:
