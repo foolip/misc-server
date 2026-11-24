@@ -350,6 +350,36 @@ per file, which R2 supports
 marquee with rclone in phase 2 keeps the original mtimes). For commit
 snapshots, upload time and build time are nearly the same.
 
+### Deploy credentials
+
+The R2 credentials are secrets of a GitHub Actions environment named
+`production` in each deploying repository, not organization secrets. The
+environment only allows the `main` branch, so a workflow run on any other
+branch never gets the credentials, however its workflow file was edited. The
+`GITHUB_REF` checks in `deploy.sh` and similar don't protect against that, since
+code on the branch can change them.
+
+```sh
+export R2_ACCESS_KEY_ID=… R2_SECRET_ACCESS_KEY=… R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+cloudflare/tools/setup-deploy-environment.sh whatwg/dom whatwg/fetch …
+```
+
+creates or updates the environment and its secrets (re-run it to rotate the
+token). It names `main` explicitly rather than using "protected branches only",
+because that option only counts classic branch protection, and lets every
+branch deploy when a repository has none. Protecting `main` is what makes
+"merged to `main`" mean "reviewed", so the script refuses a repository unless
+`main` has a ruleset requiring pull requests (`REQUIRE_RULESET=0` skips that
+check, for testing in a fork). Converting the whatwg repositories from classic
+branch protection to rulesets is part of the migration.
+
+Workflows use the environment only for pushes to `main`, so PR builds still
+run without it:
+
+```yaml
+environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'production' || '' }}
+```
+
 ## Snapshot lock rules
 
 `npm run lock-rules` (also run by `npm run convert`) writes
