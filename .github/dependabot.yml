@@ -4,3 +4,7 @@ updates:
   directory: /test
   schedule:
     interval: monthly
+- package-ecosystem: npm
+  directory: /cloudflare
+  schedule:
+    interval: weekly

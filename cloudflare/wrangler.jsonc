@@ -1,6 +1,7 @@
 // Wrangler configuration for the marquee Worker. Use the wrangler version
-// pinned in package.json (npm run deploy / npm run deploy:staging).
+// in package.json (npm ci, then npm run deploy / npm run deploy:staging).
 {
+  "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "marquee",
   "main": "src/index.mjs",
   "compatibility_date": "2026-10-01",

@@ -7,7 +7,7 @@
 //   node tools/lock-rules.mjs --check   # exit 1 if it is out of date
 //
 // Apply with (replaces all lock rules on the bucket):
-//   npx wrangler@4.156.2 r2 bucket lock set whatwg-sites --file config/lock-rules.json
+//   npm run lock-rules:apply
 
 import fs from 'node:fs';
 import path from 'node:path';

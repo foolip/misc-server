@@ -21,7 +21,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLOUDFLARE_DIR = path.resolve(HERE, '..');
 const TEST_DIR = path.resolve(CLOUDFLARE_DIR, '..', 'test');
 const SEED_DIR = path.join(CLOUDFLARE_DIR, '.wrangler', 'seed');
-const WRANGLER = ['--yes', 'wrangler@4.156.2'];
+// The wrangler in node_modules (npm ci); --no stops npx from downloading one.
+const WRANGLER = ['--no', 'wrangler'];
 const LOCAL = process.env.LOCAL_URL ?? 'http://localhost:8787';
 const TEST_FILES = ['redirects', 'content-type', 'caching', 'cors', 'hsts', 'x-headers'];
 

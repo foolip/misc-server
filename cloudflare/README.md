@@ -187,11 +187,13 @@ directly; comparing with `/etc/nginx/mime.types` on marquee would settle it.
 cd cloudflare
 npm test             # node --test: unit tests + offline replay
 npm run check-config # hosts.json up to date?
-npm run build        # bundle with the pinned wrangler (dry run)
+npm run build        # bundle with wrangler (dry run; needs npm ci)
 ```
 
-There are no dependencies; `npm test` only needs Node.js 22 or later.
-`wrangler` is run with `npx` at a pinned version (`4.156.2`) in `package.json`.
+`npm test` and the tools only need Node.js 22 or later, no packages. The one
+dependency is `wrangler` (a dev dependency, exact version in `package.json`,
+kept current by Dependabot), needed for building, `wrangler dev` and deploying:
+run `npm ci` first.
 
 **Offline replay.** `test/replay.test.mjs` runs the production test suite
 (`../test/{redirects,content-type,caching,cors,hsts,x-headers}.mjs`) against
@@ -213,6 +215,7 @@ sample of production and compares the two:
 
 ```sh
 cd cloudflare
+npm ci                 # install wrangler
 npm run local:seed     # copy ~180 production files into local R2 (.wrangler/state)
 npm run dev            # wrangler dev --env staging, on http://localhost:8787
 # in another terminal:
@@ -248,6 +251,7 @@ One-time setup (phase 2/4):
 Staging:
 
 ```sh
+npm ci   # once, installs wrangler
 npm run deploy:staging
 curl -H 'X-Marquee-Host: dom.spec.whatwg.org' https://marquee-staging.<account>.workers.dev/
 ```

@@ -23,6 +23,7 @@ jobs:
       run: npm run check-config
     - name: Unit tests and offline replay of test/
       run: npm test
+    - run: npm ci
     - name: Bundle with wrangler (dry run)
       run: npm run build
       env:
