@@ -10,7 +10,10 @@
 #   - nobody can bypass these rules
 #
 # Usage:
-#   cloudflare/tools/setup-main-ruleset.sh whatwg/dom whatwg/fetch ...
+#   cloudflare/tools/setup-main-ruleset.sh [owner/repo...]
+#
+# Without arguments: whatwg/whatwg.org and every standard in whatwg/sg's
+# db.json (see whatwg-repos.sh).
 #
 # Options (environment variables):
 #   DELETE_CLASSIC=1  delete the classic branch protection on the default
@@ -26,9 +29,11 @@ set -o errexit -o nounset -o pipefail
 NAME=main
 REQUIRED_CHECKS=(Participation Build)
 
-if [[ $# -eq 0 ]]; then
-  echo "usage: $0 owner/repo..." >&2
-  exit 1
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+if [[ $# -gt 0 ]]; then
+  repos=("$@")
+else
+  mapfile -t repos < <("$HERE/whatwg-repos.sh")
 fi
 
 checks_json=$(printf '%s\n' "${REQUIRED_CHECKS[@]}" | jq -R '{context: .}' | jq -s .)
@@ -58,7 +63,7 @@ ruleset=$(jq -n --arg name "$NAME" --argjson checks "$checks_json" '{
 }')
 
 failed=0
-for repo in "$@"; do
+for repo in "${repos[@]}"; do
   echo "== $repo"
   branch=$(gh api "repos/$repo" --jq .default_branch)
 

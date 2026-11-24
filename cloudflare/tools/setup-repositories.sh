@@ -1,30 +1,47 @@
 #!/bin/bash
-# Creates (or updates) the "production" GitHub Actions environment in each
-# given repository, allows only the main branch to use it, and stores the R2
-# deploy credentials as environment secrets. Re-run it to rotate the token.
+# Sets up the GitHub settings that deploying to whatwg-sites needs, in each
+# given repository, or by default in all of them (whatwg/whatwg.org and every
+# standard in whatwg/sg's db.json, see whatwg-repos.sh):
+#
+#   - whatbot gets write access (standards only), which it needs to report the
+#     Participation check;
+#   - main must have a ruleset requiring pull requests (see
+#     setup-main-ruleset.sh), or the repository is skipped;
+#   - the "production" environment is created or updated so that only the main
+#     branch can use it;
+#   - its secrets R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_ENDPOINT are set.
 #
 # Usage:
-#   cloudflare/tools/setup-deploy-environment.sh whatwg/whatwg.org ...
+#   cloudflare/tools/setup-repositories.sh [owner/repo...]
 #
 # The values of the R2 token aren't stored anywhere: the script asks for them
 # (the secret key without echo), or takes them from environment variables of
 # the same names if all three are set. Each run therefore uses a new token,
-# which replaces the old one everywhere: create a new R2 token, run this for
-# whatwg/whatwg.org and spec-factory's factory.py --settings --all for the
-# standards, then delete the old token.
+# which replaces the old one everywhere, and is also how a new standard gets
+# set up: create a new R2 token (Object Read & Write on whatwg-sites), run this
+# without arguments, then delete the old token.
 #
-# Needs `gh` logged in as someone with admin access to the repositories.
+# Needs `gh` logged in as someone with admin access to the repositories, and jq.
+# Exits with status 1 if any repository couldn't be set up.
 #
 # The environment names main explicitly ("selected branches"), rather than
 # using "protected branches only": that option only recognizes classic branch
 # protection, not rulesets, and if a repository has no classic protection at
 # all it lets every branch deploy. Protecting main itself (with a ruleset) is
-# what makes "merged to main" mean "reviewed"; this script checks that main
-# has a ruleset requiring pull requests, and refuses otherwise.
+# what makes "merged to main" mean "reviewed".
 
 set -o errexit -o nounset -o pipefail
 
 ENV=${ENV:-production}
+BOT=whatbot
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+if [[ $# -gt 0 ]]; then
+  repos=("$@")
+else
+  mapfile -t repos < <("$HERE/whatwg-repos.sh")
+fi
+
 if [[ -z "${R2_ACCESS_KEY_ID:-}" || -z "${R2_SECRET_ACCESS_KEY:-}" || -z "${R2_ENDPOINT:-}" ]]; then
   echo "Values of the new R2 API token (Cloudflare shows them when the token is created):"
   read -r -p "  R2_ACCESS_KEY_ID: " R2_ACCESS_KEY_ID
@@ -36,24 +53,28 @@ if [[ -z "${R2_ACCESS_KEY_ID:-}" || -z "${R2_SECRET_ACCESS_KEY:-}" || -z "${R2_E
   fi
 fi
 
-if [[ $# -eq 0 ]]; then
-  echo "usage: $0 owner/repo..." >&2
-  exit 1
-fi
+setup_repo() {
+  local repo=$1
 
-failed=0
-for repo in "$@"; do
-  echo "== $repo"
+  # whatbot writes commit statuses in the standards' repositories.
+  if [[ "$repo" != whatwg/whatwg.org ]]; then
+    local permission
+    permission=$(gh api "repos/$repo/collaborators/$BOT/permission" --jq .permission)
+    if [[ "$permission" != write && "$permission" != admin ]]; then
+      gh api --silent -X PUT "repos/$repo/collaborators/$BOT" -f permission=push
+      echo "  gave $BOT write access (was $permission)"
+    fi
+  fi
 
   # Rules that apply to main, from rulesets only (classic protection isn't
   # included in this endpoint). REQUIRE_RULESET=0 skips this, e.g. for a fork
   # used for testing.
   if [[ "${REQUIRE_RULESET:-1}" != 0 ]]; then
+    local rules
     rules=$(gh api "repos/$repo/rules/branches/main" --jq '.[].type')
     if ! grep -qx pull_request <<<"$rules"; then
-      echo "error: main in $repo has no ruleset requiring pull requests; skipping" >&2
-      failed=1
-      continue
+      echo "  error: main has no ruleset requiring pull requests; not setting up the $ENV environment" >&2
+      return 1
     fi
   fi
 
@@ -62,6 +83,7 @@ for repo in "$@"; do
 JSON
 
   # Allow the main branch (type=branch, so a tag named main doesn't match).
+  local existing
   existing=$(gh api "repos/$repo/environments/$ENV/deployment-branch-policies" \
     --jq '.branch_policies[] | select(.name == "main" and .type == "branch") | .id')
   if [[ -z "$existing" ]]; then
@@ -74,9 +96,24 @@ JSON
   printf '%s' "$R2_SECRET_ACCESS_KEY" | gh secret set R2_SECRET_ACCESS_KEY --repo "$repo" --env "$ENV"
   printf '%s' "$R2_ENDPOINT"          | gh secret set R2_ENDPOINT          --repo "$repo" --env "$ENV"
 
-  # Show the result.
   gh api "repos/$repo/environments/$ENV/deployment-branch-policies" \
     --jq '"  allowed: " + ([.branch_policies[] | .type + " " + .name] | join(", "))'
+}
+
+failed=()
+for repo in "${repos[@]}"; do
+  echo "== $repo"
+  # A subshell with errexit, so that one failing repository doesn't stop the
+  # others. (errexit is ignored in a function called from a condition.)
+  set +o errexit
+  (set -o errexit; setup_repo "$repo")
+  status=$?
+  set -o errexit
+  [[ $status -eq 0 ]] || failed+=("$repo")
 done
 
-exit "$failed"
+if [[ ${#failed[@]} -gt 0 ]]; then
+  echo ""
+  echo "Not set up: ${failed[*]}" >&2
+  exit 1
+fi

@@ -381,17 +381,18 @@ The changes (each a branch `r2-upload`):
 
 Each upload is skipped when the credentials aren't set, so the order matters
 only in that a workflow mentioning `environment: production` before the
-environment exists makes GitHub create it with no branch rule. Per repository:
+environment exists makes GitHub create it with no branch rule. So:
 
-1. `setup-main-ruleset.sh` (if `main` isn't protected by the ruleset yet).
-2. For the standards (including html), spec-factory's
-   `factory.py --settings --all`, which also gives whatbot write access and
-   covers standards added later; for whatwg.org, `setup-deploy-environment.sh`.
-3. Merge the workflow change (the shared `deploy.sh` takes effect for all
+1. `setup-main-ruleset.sh`, for repositories whose `main` isn't protected by
+   the ruleset yet.
+2. `setup-repositories.sh`.
+3. Merge the workflow changes (the shared `deploy.sh` takes effect for all
    standards once whatwg.org has deployed it to resources.whatwg.org).
 
-Repositories that deploy to marquee (from a code search for
-`MARQUEE_DEPLOY_KEY` in whatwg):
+Both scripts default to whatwg/whatwg.org and the repository of every standard
+in whatwg/sg's `db.json`, the list spec-factory uses (`tools/whatwg-repos.sh`),
+so a new standard is covered by re-running them. Repositories that deploy to
+marquee today (from a code search for `MARQUEE_DEPLOY_KEY` in whatwg):
 
 ```
 whatwg/whatwg.org whatwg/html
@@ -419,14 +420,15 @@ branch never gets the credentials, however its workflow file was edited. The
 code on the branch can change them.
 
 ```sh
-cloudflare/tools/setup-deploy-environment.sh whatwg/whatwg.org
+cloudflare/tools/setup-repositories.sh   # or with owner/repo arguments
 ```
 
 creates or updates the environment and sets its secrets, asking for the values
-of the R2 token (or taking them from environment variables of the same names).
-For the standards, spec-factory's `factory.py --settings --all` does the same.
-The values aren't stored anywhere, so adding a standard means rotating
-everywhere: create a new R2 token, run both, delete the old token. It names `main` explicitly rather than using "protected branches only",
+of the R2 token (or taking them from environment variables of the same names),
+and gives whatbot write access to the standards' repositories (it reports the
+Participation check). The values aren't stored anywhere, so adding a standard
+means rotating everywhere: create a new R2 token, run the script, delete the
+old token. It names `main` explicitly rather than using "protected branches only",
 because that option only counts classic branch protection, and lets every
 branch deploy when a repository has none. Protecting `main` is what makes
 "merged to `main`" mean "reviewed", so the script refuses a repository unless
@@ -435,7 +437,7 @@ check, for testing in a fork). Converting the whatwg repositories from classic
 branch protection to rulesets is part of the migration:
 
 ```sh
-DELETE_CLASSIC=1 cloudflare/tools/setup-main-ruleset.sh whatwg/dom whatwg/fetch …
+DELETE_CLASSIC=1 cloudflare/tools/setup-main-ruleset.sh   # or with owner/repo arguments
 ```
 
 creates or updates a ruleset named `main` on the default branch: no deletion,
