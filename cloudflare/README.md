@@ -384,7 +384,9 @@ only in that a workflow mentioning `environment: production` before the
 environment exists makes GitHub create it with no branch rule. Per repository:
 
 1. `setup-main-ruleset.sh` (if `main` isn't protected by the ruleset yet).
-2. `setup-deploy-environment.sh`.
+2. For the standards (including html), spec-factory's
+   `factory.py --settings --all`, which also gives whatbot write access and
+   covers standards added later; for whatwg.org, `setup-deploy-environment.sh`.
 3. Merge the workflow change (the shared `deploy.sh` takes effect for all
    standards once whatwg.org has deployed it to resources.whatwg.org).
 
