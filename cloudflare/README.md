@@ -285,11 +285,12 @@ For each host:
 Domain in the dashboard), then restore the DNS-only A/AAAA record pointing at
 marquee. marquee keeps serving until phase 6.
 
-## Deploy scripts (phase 3, not done here)
+## Deploy scripts (phase 3)
 
 Today three places deploy to marquee with rsync over ssh using the `MARQUEE_*`
 secrets. In phase 3 they write to R2 too, with `aws s3 sync` (preinstalled on
-GitHub's runners) against the R2 endpoint, using organization secrets `R2_*`:
+GitHub's runners) against the R2 endpoint, using the `R2_*` secrets of each
+repository's `production` environment (see [Deploy credentials](#deploy-credentials)):
 
 ```sh
 aws s3 sync out/ "s3://whatwg-sites/$HOST/" \
@@ -340,6 +341,47 @@ per file, which R2 supports
 `aws s3 sync` doesn't set, so dates are upload times (the bulk copy from
 marquee with rclone in phase 2 keeps the original mtimes). For commit
 snapshots, upload time and build time are nearly the same.
+
+### Rollout
+
+The changes (each a branch `r2-upload`):
+
+- **whatwg/whatwg.org**: `deploy.sh` (whatwg.org, resources, spec, idea,
+  images, n, lists and forums, with `--delete`), the shared
+  `resources.whatwg.org/build/deploy.sh` (every Bikeshed standard, no deletes,
+  snapshots and review drafts uploaded once) and the workflow.
+- **whatwg/spec-factory**: `build.yml.template` passes the credentials from the
+  `production` environment. Regenerating the standards' repositories with
+  `factory.py` then updates each `build.yml`.
+- **whatwg/html**: an "Upload to R2" step after the rsync.
+
+Each upload is skipped when the credentials aren't set, so the order matters
+only in that a workflow mentioning `environment: production` before the
+environment exists makes GitHub create it with no branch rule. Per repository:
+
+1. `setup-main-ruleset.sh` (if `main` isn't protected by the ruleset yet).
+2. `setup-deploy-environment.sh`.
+3. Merge the workflow change (the shared `deploy.sh` takes effect for all
+   standards once whatwg.org has deployed it to resources.whatwg.org).
+
+Repositories that deploy to marquee (from a code search for
+`MARQUEE_DEPLOY_KEY` in whatwg):
+
+```
+whatwg/whatwg.org whatwg/html
+whatwg/compat whatwg/compression whatwg/console whatwg/cookiestore whatwg/dom
+whatwg/encoding whatwg/fetch whatwg/fs whatwg/fullscreen whatwg/hid
+whatwg/infra whatwg/mimesniff whatwg/notifications whatwg/quirks whatwg/serial
+whatwg/storage whatwg/streams whatwg/testutils whatwg/url whatwg/urlpattern
+whatwg/webidl whatwg/websockets whatwg/xhr
+```
+
+Directories on marquee without a deploying repository, to copy once in phase 2:
+books.idea, figures.idea, and whatever the inventory finds. hid and serial
+deploy to marquee, and bluetooth, nfc and usb have directories there, but none
+of the five is in `debian/marquee/DOMAINS`, so neither nginx nor the Worker
+serves them until a site config is added (which `npm run convert` picks up,
+lock rules included).
 
 ### Deploy credentials
 
