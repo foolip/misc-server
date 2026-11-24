@@ -297,34 +297,58 @@ marquee. marquee keeps serving until phase 6.
 ## Deploy scripts (phase 3, not done here)
 
 Today three places deploy to marquee with rsync over ssh using the `MARQUEE_*`
-secrets. In phase 3 they write to R2 too, with the AWS CLI or rclone against
-the R2 S3 endpoint and organization secrets `R2_*`:
+secrets. In phase 3 they write to R2 too, with `aws s3 sync` (preinstalled on
+GitHub's runners) against the R2 endpoint, using organization secrets `R2_*`:
+
+```sh
+aws s3 sync out/ "s3://whatwg-sites/$HOST/" \
+  --endpoint-url "$R2_ENDPOINT" --region auto \
+  --exclude 'commit-snapshots/*' --exclude 'review-drafts/*'   # add --delete where rsync has it
+```
+
+Most files change with every build, so re-uploading unchanged ones costs
+little.
 
 - **whatwg/whatwg.org `deploy.sh`** uses `rsync --delete` for whatwg.org and
   other sites, including lists.whatwg.org (~88k files) and forums.whatwg.org
-  (~4k files). Equivalent: sync each host to `whatwg-sites/<host>/` with delete.
+  (~4k files). Equivalent: sync each host to `whatwg-sites/<host>/` with
+  `--delete`.
 - **`resources.whatwg.org/build/deploy.sh`** (every Bikeshed spec, via the
   spec-factory workflows) syncs without `--delete`, and adds
   `commit-snapshots/<sha>/` and `review-drafts/<name>/`. Equivalent: sync the
-  spec to `whatwg-sites/<host>/` without delete, and upload the snapshot
-  directories without overwriting existing objects (below).
+  spec to `whatwg-sites/<host>/` without `--delete`, and upload new snapshot
+  directories as below.
 - **whatwg/html's workflow** syncs with `--delete` but excludes
   `commit-snapshots` and `review-drafts`, then syncs those separately.
-  Equivalent: the same, and the excludes are now required: deleting a locked
+  Equivalent: the same. The excludes are now required: deleting a locked
   object fails, which would fail the sync.
 
-Directory listing dates rely on `customMetadata.mtime`. rclone sets it;
-`aws s3 sync` does not, so with the AWS CLI dates are upload times. Either use
-rclone for deploys too, or accept upload times (for commit snapshots they are
-nearly the same thing).
+**Snapshots.** `commit-snapshots/` and `review-drafts/` are locked, so any
+attempt to overwrite an object there fails, even with identical content, and
+`aws s3 sync` would try whenever the local file looks newer. Upload only the
+new snapshot directory, and skip it if it already exists (a re-run deploy for
+the same commit, or a review draft that is rebuilt on every deploy, which needs
+checking in `deploy.sh`):
 
-Uploads under the locked prefixes must skip keys that already exist, because
-an overwrite fails even if the content is identical. That happens when a
-deploy is re-run for the same commit, or if a deploy rebuilds existing review
-drafts (to check in `deploy.sh`). Use `rclone copy --ignore-existing`, or
-`If-None-Match: *` on each PutObject, which R2 supports
-([conditional operations](https://developers.cloudflare.com/r2/api/s3/conditional-operations/))
-and which fails with `412` instead of overwriting.
+```sh
+dest="s3://whatwg-sites/$HOST/commit-snapshots/$SHA/"
+if [ -z "$(aws s3 ls "$dest" --endpoint-url "$R2_ENDPOINT" --region auto)" ]; then
+  aws s3 sync "out/commit-snapshots/$SHA/" "$dest" --endpoint-url "$R2_ENDPOINT" --region auto
+fi
+```
+
+Never sync the whole `commit-snapshots/` or `review-drafts/` directory. If a
+deploy fails half-way through a new snapshot, the files already uploaded are
+locked; rerunning the same `sync` only uploads the missing ones as long as the
+local files aren't newer, so a retry may need the lock rule disabled briefly.
+For a stricter guard, upload with `aws s3api put-object --if-none-match '*'`
+per file, which R2 supports
+([conditional operations](https://developers.cloudflare.com/r2/api/s3/conditional-operations/)).
+
+**Listing dates.** Directory listings use `customMetadata.mtime`, which
+`aws s3 sync` doesn't set, so dates are upload times (the bulk copy from
+marquee with rclone in phase 2 keeps the original mtimes). For commit
+snapshots, upload time and build time are nearly the same.
 
 ## Snapshot lock rules
 
