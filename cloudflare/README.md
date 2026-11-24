@@ -441,11 +441,12 @@ doesn't report both checks (every PR there would be blocked; `FORCE=1`
 overrides), and only deletes the classic protection after checking the ruleset
 is in effect.
 
-Workflows use the environment only for pushes to `main`, so PR builds still
-run without it:
+Workflows use the environment only for runs on `main`, so PR builds (whose
+ref is `refs/pull/…/merge`, which the environment would refuse) still run
+without it:
 
 ```yaml
-environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'production' || '' }}
+environment: ${{ github.ref == 'refs/heads/main' && 'production' || '' }}
 ```
 
 ## Snapshot lock rules
