@@ -378,7 +378,7 @@ DELETE_CLASSIC=1 cloudflare/tools/setup-main-ruleset.sh whatwg/dom whatwg/fetch 
 ```
 
 creates or updates a ruleset named `main` on the default branch: no deletion,
-linear history, a pull request with 1 approval, the `Participation` and `Build`
+no force pushes, linear history, a pull request with 1 approval, the `Participation` and `Build`
 checks passing, and no bypass. It skips a repository whose default branch
 doesn't report both checks (every PR there would be blocked; `FORCE=1`
 overrides), and only deletes the classic protection after checking the ruleset

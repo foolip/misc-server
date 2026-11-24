@@ -3,6 +3,7 @@
 # repository, replacing classic branch protection:
 #
 #   - no deletion
+#   - no force pushes
 #   - linear history
 #   - changes only through a pull request with 1 approval
 #   - status checks "Participation" and "Build" must pass
@@ -40,6 +41,7 @@ ruleset=$(jq -n --arg name "$NAME" --argjson checks "$checks_json" '{
   conditions: {ref_name: {include: ["~DEFAULT_BRANCH"], exclude: []}},
   rules: [
     {type: "deletion"},
+    {type: "non_fast_forward"},
     {type: "required_linear_history"},
     {type: "pull_request", parameters: {
       required_approving_review_count: 1,
@@ -84,7 +86,7 @@ for repo in "$@"; do
 
   # Confirm the rules are in effect on the default branch.
   active=$(gh api "repos/$repo/rules/branches/$branch" --jq '.[].type' | sort -u)
-  for type in deletion required_linear_history pull_request required_status_checks; do
+  for type in deletion non_fast_forward required_linear_history pull_request required_status_checks; do
     if ! grep -qx "$type" <<<"$active"; then
       echo "error: rule $type isn't active on $branch in $repo" >&2
       failed=1
