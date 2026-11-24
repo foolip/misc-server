@@ -18,13 +18,17 @@
 
   "env": {
     // Staging: marquee-staging.<account>.workers.dev. The target host comes
-    // from the X-Marquee-Host request header. Bindings are not inherited by
-    // environments, so they are repeated here.
+    // from the X-Marquee-Host request header, or is STAGING_DEFAULT_HOST
+    // without it (for browsers). Bindings are not inherited by environments,
+    // so they are repeated here.
     "staging": {
       "name": "marquee-staging",
       "workers_dev": true,
       "routes": [],
-      "vars": { "ALLOW_HOST_HEADER": "true" },
+      "vars": {
+        "ALLOW_HOST_HEADER": "true",
+        "STAGING_DEFAULT_HOST": "fullscreen.spec.whatwg.org"
+      },
       "r2_buckets": [
         { "binding": "BUCKET", "bucket_name": "whatwg-sites" }
       ]

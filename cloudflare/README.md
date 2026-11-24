@@ -253,7 +253,10 @@ curl -H 'X-Marquee-Host: dom.spec.whatwg.org' https://marquee-staging.<account>.
 ```
 
 `marquee-staging` uses the same bucket (read-only) and takes the host from
-`X-Marquee-Host`. Redirect `Location`s use the real host, as nginx would. Note
+`X-Marquee-Host`, or without that header (in a browser) serves
+`STAGING_DEFAULT_HOST`, set to `fullscreen.spec.whatwg.org` in
+`wrangler.jsonc`, so `https://marquee-staging.<account>.workers.dev/` shows the
+Fullscreen Standard. Redirect `Location`s use the real host, as nginx would. Note
 that the Cache API does nothing on `workers.dev`, so listings aren't cached
 there.
 

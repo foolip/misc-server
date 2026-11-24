@@ -9,6 +9,7 @@
 //     cache,           // optional Cache API object, used for listings
 //     waitUntil,       // optional ctx.waitUntil
 //     allowHostHeader, // staging: take the host from X-Marquee-Host
+//     defaultHost,     // staging: the host when there is no X-Marquee-Host
 //   })
 
 import { BadRequest, parseTarget, escapePath, escapeHeaderValue, extension } from './path.mjs';
@@ -41,8 +42,10 @@ const REASONS = {
 export async function handle(request, deps) {
   const url = new URL(request.url);
   let host = url.hostname;
-  if (deps.allowHostHeader && request.headers.has(HOST_HEADER)) {
-    host = request.headers.get(HOST_HEADER);
+  if (deps.allowHostHeader) {
+    // Staging: the X-Marquee-Host header, else the configured default host,
+    // so that a browser (which can't set the header) sees a site too.
+    host = request.headers.get(HOST_HEADER) ?? deps.defaultHost ?? host;
   }
   host = host.toLowerCase();
   const hostConf = deps.config.hosts[host];

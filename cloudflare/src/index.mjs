@@ -13,6 +13,7 @@ export default {
       // Only the staging environment sets this. Production ignores the
       // X-Marquee-Host header.
       allowHostHeader: env.ALLOW_HOST_HEADER === 'true',
+      defaultHost: env.STAGING_DEFAULT_HOST || undefined,
     });
   },
 };
