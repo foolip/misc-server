@@ -6,7 +6,8 @@
 //   handle(request, {
 //     config,          // config/hosts.json
 //     bucket,          // R2 bucket (or fake) with all files, keyed <host><path>
-//     cache,           // optional Cache API object, used for listings
+//     listingCache,    // optional Cache API object for rendered listings
+//     responseCache,   // optional Cache API object for whole responses
 //     waitUntil,       // optional ctx.waitUntil
 //   })
 
@@ -15,6 +16,12 @@ import { findLocation } from './locations.mjs';
 import { collectEntries, sortEntries, sortFromQuery, renderListing, objectDate } from './listing.mjs';
 
 export const LISTING_CACHE_SECONDS = 300;
+// How long a response is reused, per URL and Cloudflare location, before R2
+// is asked again. A deploy shows up everywhere within this time.
+export const RESPONSE_CACHE_SECONDS = 60;
+const CACHEABLE_STATUSES = new Set([200, 301, 302, 303, 307, 308, 404, 410]);
+// The response's own Cache-Control, while the cached copy carries ours.
+const ORIGINAL_CACHE_CONTROL = 'X-Whatwg-Original-Cache-Control';
 
 // Statuses for which nginx applies `expires` and non-`always` add_header.
 const SAFE_STATUSES = new Set([200, 201, 204, 206, 301, 302, 303, 304, 307, 308]);
@@ -48,6 +55,65 @@ export async function handle(request, deps) {
     });
   }
 
+  // The response cache: whole GET responses per URL, for
+  // RESPONSE_CACHE_SECONDS. HEAD and conditional requests are answered from
+  // the cached GET response; range requests always go to R2.
+  const cache = deps.responseCache;
+  const method = request.method;
+  if (!cache || (method !== 'GET' && method !== 'HEAD') || request.headers.has('range')) {
+    return handleUncached(request, deps, url, host, hostConf);
+  }
+  const key = new Request(`https://${host}${url.pathname}${url.search}`);
+  const hit = await cache.match(key);
+  if (hit) return fromCache(hit, request);
+  const response = await handleUncached(request, deps, url, host, hostConf);
+  if (method === 'GET' && CACHEABLE_STATUSES.has(response.status)) {
+    const put = cache.put(key, toCacheEntry(response.clone()));
+    if (deps.waitUntil) deps.waitUntil(put);
+    else await put;
+  }
+  return response;
+}
+
+function toCacheEntry(response) {
+  const headers = new Headers(response.headers);
+  headers.set(ORIGINAL_CACHE_CONTROL, response.headers.get('cache-control') ?? '');
+  headers.set('Cache-Control', `max-age=${RESPONSE_CACHE_SECONDS}`);
+  return new Response(response.body, { status: response.status, headers });
+}
+
+async function fromCache(hit, request) {
+  const headers = new Headers(hit.headers);
+  const original = headers.get(ORIGINAL_CACHE_CONTROL);
+  headers.delete(ORIGINAL_CACHE_CONTROL);
+  if (original) headers.set('Cache-Control', original);
+  else headers.delete('Cache-Control');
+  let status = hit.status;
+  if (status === 200 && notModified(request.headers, headers)) status = 304;
+  if (status === 304 || request.method === 'HEAD') {
+    // Not awaited: cancelling one branch of a teed (cloned) body only
+    // settles once every branch is cancelled.
+    hit.body?.cancel().catch(() => {});
+    return new Response(null, { status, headers });
+  }
+  return new Response(hit.body, { status, headers });
+}
+
+// If-None-Match (weak comparison), else If-Modified-Since, as in RFC 9110.
+function notModified(requestHeaders, headers) {
+  const inm = requestHeaders.get('if-none-match');
+  const etag = headers.get('etag');
+  if (inm !== null) {
+    if (!etag) return false;
+    const strip = t => t.trim().replace(/^W\//, '');
+    return inm.split(',').some(t => t.trim() === '*' || strip(t) === strip(etag));
+  }
+  const ims = Date.parse(requestHeaders.get('if-modified-since') ?? '');
+  const lastModified = Date.parse(headers.get('last-modified') ?? '');
+  return Number.isFinite(ims) && Number.isFinite(lastModified) && lastModified <= ims;
+}
+
+async function handleUncached(request, deps, url, host, hostConf) {
   const ctx = {
     deps,
     config: deps.config,
@@ -367,7 +433,7 @@ function resolveRange(range, size) {
 
 async function listing(ctx, uri, location, state) {
   const sort = sortFromQuery(ctx.args, setting(ctx, location, 'fancyindexDefaultSort'));
-  const cache = ctx.deps.cache;
+  const cache = ctx.deps.listingCache;
   const cacheKey = new Request(`https://${ctx.host}${escapePath(uri)}?fancyindex-sort=${sort}`);
   let html = null;
   if (cache && !state.errorStatus) {

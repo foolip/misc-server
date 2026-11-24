@@ -8,7 +8,7 @@ function setup(files = {}, filesWithMtime = []) {
   const bucket = new MemoryBucket(files);
   for (const [key, value, mtime] of filesWithMtime) bucket.put(key, value, { mtime });
   const cache = new MemoryCache();
-  const deps = { config, bucket, cache };
+  const deps = { config, bucket, listingCache: cache };
   const fetch = (url, init = {}) => handle(new Request(url, init), deps);
   return { bucket, cache, deps, fetch };
 }
@@ -190,6 +190,88 @@ describe('directories without the trailing slash', () => {
     const { fetch } = setup({ 'dom.spec.whatwg.org/v1.0/a.txt': 'x' });
     assert.equal((await fetch('https://dom.spec.whatwg.org/v1.0')).status, 404);
     assert.equal((await fetch('https://dom.spec.whatwg.org/v1.0/')).status, 200);
+  });
+});
+
+describe('response cache', () => {
+  function cached(files = {}) {
+    const t = setup(files);
+    const responseCache = new MemoryCache();
+    const deps = { ...t.deps, responseCache };
+    const fetch = (url, init = {}) => handle(new Request(url, init), deps);
+    const r2 = () => t.bucket.calls.length;
+    return { ...t, responseCache, fetch, r2 };
+  }
+
+  test('a second GET is served without R2, with the same headers', async () => {
+    const { fetch, r2, responseCache } = cached({ 'dom.spec.whatwg.org/a.css': 'css', 'dom.spec.whatwg.org/a.png': 'png' });
+    for (const [path, cc] of [['a.css', null], ['a.png', 'max-age=604800']]) {
+      const first = await fetch(`https://dom.spec.whatwg.org/${path}`);
+      await first.text();
+      const calls = r2();
+      const second = await fetch(`https://dom.spec.whatwg.org/${path}`);
+      assert.equal(r2(), calls, path);
+      assert.equal(second.status, 200);
+      assert.equal(await second.text(), path.slice(2));
+      assert.equal(second.headers.get('cache-control'), cc);
+      assert.equal(second.headers.get('x-whatwg-original-cache-control'), null);
+      assert.equal(second.headers.get('content-type'), first.headers.get('content-type'));
+      assert.equal(second.headers.get('etag'), first.headers.get('etag'));
+      assertStandardHeaders(second);
+    }
+    const entry = responseCache.entries.get('https://dom.spec.whatwg.org/a.css');
+    assert.equal(entry.headers.get('cache-control'), 'max-age=60');
+  });
+
+  test('HEAD and conditional requests use the cached GET', async () => {
+    const { fetch, r2 } = cached({ 'dom.spec.whatwg.org/a.txt': 'hello' });
+    const first = await fetch('https://dom.spec.whatwg.org/a.txt');
+    await first.text();
+    const calls = r2();
+    const head = await fetch('https://dom.spec.whatwg.org/a.txt', { method: 'HEAD' });
+    assert.equal(head.status, 200);
+    assert.equal(await head.text(), '');
+    const inm = await fetch('https://dom.spec.whatwg.org/a.txt', { headers: { 'If-None-Match': `W/${first.headers.get('etag')}` } });
+    assert.equal(inm.status, 304);
+    assert.equal(await inm.text(), '');
+    assertStandardHeaders(inm);
+    const ims = await fetch('https://dom.spec.whatwg.org/a.txt', { headers: { 'If-Modified-Since': first.headers.get('last-modified') } });
+    assert.equal(ims.status, 304);
+    const other = await fetch('https://dom.spec.whatwg.org/a.txt', { headers: { 'If-None-Match': '"other"' } });
+    assert.equal(other.status, 200);
+    assert.equal(await other.text(), 'hello');
+    assert.equal(r2(), calls);
+  });
+
+  test('redirects and 404s are cached; the query is part of the key', async () => {
+    const { fetch, r2 } = cached();
+    for (const url of ['https://whatwg.org/specs/foo', 'https://www.whatwg.org/x?a=1']) {
+      const first = await fetch(url);
+      await first.text();
+      const calls = r2();
+      const again = await fetch(url);
+      assert.equal(again.status, first.status);
+      assert.equal(again.headers.get('location'), first.headers.get('location'));
+      assert.equal(r2(), calls);
+    }
+    const other = await fetch('https://www.whatwg.org/x?a=2');
+    assert.equal(other.headers.get('location'), 'https://whatwg.org/x?a=2');
+  });
+
+  test('range requests, other methods and other statuses bypass the cache', async () => {
+    const { fetch, r2, responseCache } = cached({ 'dom.spec.whatwg.org/a.txt': 'hello world' });
+    const range = await fetch('https://dom.spec.whatwg.org/a.txt', { headers: { Range: 'bytes=0-4' } });
+    assert.equal(range.status, 206);
+    assert.equal(responseCache.entries.size, 0);
+    await (await fetch('https://dom.spec.whatwg.org/a.txt')).text();
+    const calls = r2();
+    const range2 = await fetch('https://dom.spec.whatwg.org/a.txt', { headers: { Range: 'bytes=6-' } });
+    assert.equal(range2.status, 206);
+    assert.equal(await range2.text(), 'world');
+    assert.ok(r2() > calls);
+    assert.equal((await fetch('https://dom.spec.whatwg.org/a.txt', { method: 'POST', body: 'x' })).status, 405);
+    assert.equal((await fetch('https://dom.spec.whatwg.org/%zz')).status, 400);
+    assert.deepEqual([...responseCache.entries.keys()], ['https://dom.spec.whatwg.org/a.txt']);
   });
 });
 

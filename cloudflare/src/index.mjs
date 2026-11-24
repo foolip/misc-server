@@ -8,7 +8,8 @@ export default {
     return handle(request, {
       config,
       bucket: env.BUCKET,
-      cache: caches.default,
+      listingCache: await caches.open('listings'),
+      responseCache: await caches.open('responses'),
       waitUntil: p => ctx.waitUntil(p),
     });
   },

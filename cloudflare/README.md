@@ -118,6 +118,26 @@ The Worker reproduces what nginx does on marquee:
     308 only. html.spec.whatwg.org/print.pdf also gets
     `Content-Disposition: inline; filename=html-standard.pdf`.
 
+### Response cache
+
+The Worker runs in front of Cloudflare's cache, so it caches responses itself
+with the Cache API (a cache named `responses`), to avoid reading R2 (in one
+region) for every request:
+
+- Whole `GET` responses with status 200, 301, 302, 303, 307, 308, 404 or 410
+  are cached per URL (host, path and query) for `RESPONSE_CACHE_SECONDS` = 60
+  seconds, in each Cloudflare location separately.
+- `HEAD` requests and conditional requests (`If-None-Match`,
+  `If-Modified-Since`) are answered from the cached `GET` response, with `304`
+  where it applies. Requests with `Range`, and other methods, always go to R2.
+- The cached copy carries `Cache-Control: max-age=60` for the Cache API; the
+  response's own `Cache-Control` (or its absence) is restored when serving it,
+  so browsers see the same headers either way.
+- There is no purge on deploy: a changed file can be served stale for up to 60
+  seconds.
+- Rendered directory listings have a separate cache (`listings`, 5 minutes),
+  so a listing can be up to about 6 minutes old.
+
 **forums.whatwg.org** has three special things, which the converter recognizes
 exactly: `location / { index index.php; }`, `location = / { return 301 /bb3/; }`,
 and `location ~ \.php` with an `if` that strips a trailing `&?sid=[a-z0-9]*`
@@ -502,9 +522,10 @@ Intentional or unavoidable differences:
     there is no `Server: nginx` header (Cloudflare sends `Server: cloudflare`).
 12. **Unknown hosts** get `421`. With Custom Domains, only configured hosts
     reach the Worker.
-13. **No edge caching of files.** The Worker runs in front of Cloudflare's
-    cache, so every file request reads from R2 (with the same `Cache-Control`
-    as nginx for browsers). This could be added with the Cache API later.
+13. **Deploys take up to a minute to show up.** Responses are cached for 60
+    seconds per Cloudflare location (see [Response cache](#response-cache)),
+    so a changed file can be served stale for that long; nginx serves the new
+    file immediately. Browsers see the same `Cache-Control` as from nginx.
 
 ## Migration plan
 
