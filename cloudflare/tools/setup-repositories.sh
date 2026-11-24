@@ -3,8 +3,6 @@
 # given repository, or by default in all of them (whatwg/whatwg.org and every
 # standard in whatwg/sg's db.json, see whatwg-repos.sh):
 #
-#   - whatbot gets write access (standards only), which it needs to report the
-#     Participation check;
 #   - main must have a ruleset requiring pull requests (see
 #     setup-main-ruleset.sh), or the repository is skipped;
 #   - the "production" environment is created or updated so that only the main
@@ -33,7 +31,6 @@
 set -o errexit -o nounset -o pipefail
 
 ENV=${ENV:-production}
-BOT=whatbot
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 if [[ $# -gt 0 ]]; then
@@ -55,16 +52,6 @@ fi
 
 setup_repo() {
   local repo=$1
-
-  # whatbot writes commit statuses in the standards' repositories.
-  if [[ "$repo" != whatwg/whatwg.org ]]; then
-    local permission
-    permission=$(gh api "repos/$repo/collaborators/$BOT/permission" --jq .permission)
-    if [[ "$permission" != write && "$permission" != admin ]]; then
-      gh api --silent -X PUT "repos/$repo/collaborators/$BOT" -f permission=push
-      echo "  gave $BOT write access (was $permission)"
-    fi
-  fi
 
   # Rules that apply to main, from rulesets only (classic protection isn't
   # included in this endpoint). REQUIRE_RULESET=0 skips this, e.g. for a fork

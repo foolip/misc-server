@@ -424,9 +424,9 @@ cloudflare/tools/setup-repositories.sh   # or with owner/repo arguments
 ```
 
 creates or updates the environment and sets its secrets, asking for the values
-of the R2 token (or taking them from environment variables of the same names),
-and gives whatbot write access to the standards' repositories (it reports the
-Participation check). The values aren't stored anywhere, so adding a standard
+of the R2 token (or taking them from environment variables of the same names).
+(Other repository settings, like whatbot's write access, are checked and fixed
+by spec-factory's `factory.py --check-settings` / `--update-settings`.) The values aren't stored anywhere, so adding a standard
 means rotating everywhere: create a new R2 token, run the script, delete the
 old token. It names `main` explicitly rather than using "protected branches only",
 because that option only counts classic branch protection, and lets every
