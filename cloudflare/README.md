@@ -89,7 +89,11 @@ The Worker reproduces what nginx does on marquee:
      internal redirect, which goes through location matching again, as in
      nginx. With no index file, `fancyindex on` gives a directory listing.
    - A path without a trailing slash that has no object but has objects under
-     `path/` gets `301` to `path/`, keeping the query string.
+     `path/` gets `301` to `path/`, keeping the query string. To avoid R2 list
+     calls (Class A, 12.5 times the price of a read), this first checks for
+     `path/index.html` with a `head`; then, if the last segment has a file
+     extension, answers `404` without listing; only otherwise lists `path/`.
+     With roughly 11% of requests being 404s, this matters for cost.
    - `bucket.get(key, { onlyIf: request.headers, range: request.headers })`
      gives `304`, `412` and `206` responses. Unsatisfiable ranges get `416`.
    - HEAD gets the same headers and no body.
@@ -485,16 +489,20 @@ Intentional or unavoidable differences:
    as Workers parsed it, which has dot segments resolved and some characters
    percent-encoded, where nginx uses the raw request line. Location values
    with spaces or non-ASCII are percent-encoded; nginx sends raw bytes.
-8. **Paths with invalid UTF-8** (after decoding) can't name an R2 key, so they
+8. **Directories with a period in their name** and no index file are `404`
+   when requested without the trailing slash, instead of a `301` (see
+   [Request handling](#request-handling)). No such directory exists on
+   marquee.
+9. **Paths with invalid UTF-8** (after decoding) can't name an R2 key, so they
    get `404`. nginx could serve such file names from disk.
-9. **Methods.** nginx answers a POST to a missing file with `404` and to an
+10. **Methods.** nginx answers a POST to a missing file with `404` and to an
    existing one with `405`; the Worker answers `405` either way. Redirects
    apply to every method in both.
-10. **Default error pages** end with `nginx` instead of `nginx/1.18.0`, and
+11. **Default error pages** end with `nginx` instead of `nginx/1.18.0`, and
     there is no `Server: nginx` header (Cloudflare sends `Server: cloudflare`).
-11. **Unknown hosts** get `421`. With Custom Domains, only configured hosts
+12. **Unknown hosts** get `421`. With Custom Domains, only configured hosts
     reach the Worker.
-12. **No edge caching of files.** The Worker runs in front of Cloudflare's
+13. **No edge caching of files.** The Worker runs in front of Cloudflare's
     cache, so every file request reads from R2 (with the same `Cache-Control`
     as nginx for browsers). This could be added with the Cache API later.
 

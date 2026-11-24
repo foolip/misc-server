@@ -275,9 +275,9 @@ async function serveFile(ctx, uri, state, { fallthrough = false } = {}) {
 
   if (!obj) {
     if (fallthrough) return null;
-    // A directory without the trailing slash: redirect, keeping the query.
-    const children = await bucket.list({ prefix: key + '/', limit: 1 });
-    if (children.objects.length || children.delimitedPrefixes?.length) {
+    // A directory without the trailing slash gets a redirect, keeping the
+    // query. R2 has no directories, so check as cheaply as possible:
+    if (await isDirectory(ctx, bucket, uri)) {
       const target = escapePath(uri) + '/' + (ctx.args ? `?${ctx.args}` : '');
       return redirect(ctx, location, 301, target);
     }
@@ -334,6 +334,25 @@ function parseSingleRange(header) {
 function rangeSatisfiable(range, size) {
   if (range.start === null) return range.end > 0 && size > 0;
   return range.start < size;
+}
+
+// Whether `uri` (no trailing slash, no object of its own) is a directory,
+// i.e. whether any key starts with `uri/`:
+// 1. If it has an index file, yes. This is a head (a Class B operation, like
+//    reads) and covers most directories.
+// 2. If its last segment has an extension, assume not. No directory on
+//    marquee has a period in its name, and this answers most 404s without a
+//    list (a Class A operation, 12.5 times the price).
+// 3. Otherwise list, for directories without an index file.
+async function isDirectory(ctx, bucket, uri) {
+  const { location } = findLocation(ctx.hostConf, uri + '/');
+  const index = setting(ctx, location, 'index') ?? ['index.html'];
+  for (const name of index) {
+    if (await bucket.head(keyFor(ctx, `${uri}/${name}`))) return true;
+  }
+  if (extension(uri) !== '') return false;
+  const children = await bucket.list({ prefix: keyFor(ctx, uri) + '/', limit: 1 });
+  return children.objects.length > 0 || (children.delimitedPrefixes?.length ?? 0) > 0;
 }
 
 function resolveRange(range, size) {

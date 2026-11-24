@@ -146,6 +146,53 @@ describe('files', () => {
   });
 });
 
+describe('directories without the trailing slash', () => {
+  const ops = bucket => bucket.calls.map(([op]) => op).join(' ');
+
+  test('with an index file: head, no list', async () => {
+    const { bucket, fetch } = setup({ 'dom.spec.whatwg.org/dir/index.html': 'x' });
+    const r = await fetch('https://dom.spec.whatwg.org/dir?q');
+    assert.equal(r.status, 301);
+    assert.equal(r.headers.get('location'), 'https://dom.spec.whatwg.org/dir/?q');
+    assert.equal(ops(bucket), 'get head');
+  });
+
+  test('without an index file: list', async () => {
+    const { bucket, fetch } = setup({ 'dom.spec.whatwg.org/dir/a.png': 'x' });
+    const r = await fetch('https://dom.spec.whatwg.org/dir');
+    assert.equal(r.status, 301);
+    assert.equal(ops(bucket), 'get head list');
+  });
+
+  test('missing file with an extension: no list', async () => {
+    const { bucket, fetch } = setup();
+    const r = await fetch('https://dom.spec.whatwg.org/missing.png');
+    assert.equal(r.status, 404);
+    assert.equal(ops(bucket), 'get head');
+  });
+
+  test('missing name without an extension: list', async () => {
+    const { bucket, fetch } = setup();
+    const r = await fetch('https://dom.spec.whatwg.org/missing');
+    assert.equal(r.status, 404);
+    assert.equal(ops(bucket), 'get head list');
+  });
+
+  test('uses the index files of the location (forums: index.php)', async () => {
+    const { bucket, fetch } = setup({ 'forums.whatwg.org/bb3/index.php': 'x' });
+    const r = await fetch('https://forums.whatwg.org/bb3');
+    assert.equal(r.status, 301);
+    assert.equal(r.headers.get('location'), 'https://forums.whatwg.org/bb3/');
+    assert.ok(!ops(bucket).includes('list'));
+  });
+
+  test('a directory with a period in its name and no index is a 404 (unlike nginx)', async () => {
+    const { fetch } = setup({ 'dom.spec.whatwg.org/v1.0/a.txt': 'x' });
+    assert.equal((await fetch('https://dom.spec.whatwg.org/v1.0')).status, 404);
+    assert.equal((await fetch('https://dom.spec.whatwg.org/v1.0/')).status, 200);
+  });
+});
+
 describe('content types', () => {
   const cases = [
     ['https://resources.whatwg.org/x.js', 'text/javascript; charset=utf-8'],
