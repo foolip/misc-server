@@ -3,7 +3,7 @@
 // with production. Needs network access to the whatwg.org hosts.
 //
 //   npm run local:seed      # copy a sample of production into local R2
-//   npm run dev             # in another terminal: wrangler dev --env staging
+//   npm run dev             # in another terminal: wrangler dev
 //   npm run local:compare   # request the same URLs from both and diff
 //
 // The sample is every https: URL in ../test/*.mjs on a host the Worker
@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import config from '../config/hosts.json' with { type: 'json' };
 
@@ -119,7 +120,7 @@ async function seed() {
     if (!list.length) continue;
     const listFile = path.join(SEED_DIR, `${bucket}.json`);
     fs.writeFileSync(listFile, JSON.stringify(list));
-    execFileSync('npx', [...WRANGLER, 'r2', 'bulk', 'put', bucket, '--filename', listFile, '--local', '--env', 'staging'], {
+    execFileSync('npx', [...WRANGLER, 'r2', 'bulk', 'put', bucket, '--filename', listFile, '--local'], {
       cwd: CLOUDFLARE_DIR,
       stdio: 'inherit',
     });
@@ -136,6 +137,25 @@ const COMPARED_HEADERS = [
   'strict-transport-security',
   'x-content-type-options',
 ];
+
+// GET from the local Worker with the URL's host in the Host header, which
+// wrangler dev turns into the request URL's hostname. (fetch() can't set
+// Host, so this uses node:http.)
+function localRequest(url) {
+  const local = new URL(LOCAL);
+  return new Promise((resolve, reject) => {
+    const req = http.get({
+      hostname: local.hostname,
+      port: local.port,
+      path: url.pathname + url.search,
+      headers: { host: url.hostname },
+    }, res => {
+      res.resume();
+      resolve({ status: res.statusCode, headers: new Headers(Object.entries(res.headers).map(([k, v]) => [k, String(v)])) });
+    });
+    req.on('error', reject);
+  });
+}
 
 function summarize(r) {
   const out = { status: r.status };
@@ -157,13 +177,11 @@ async function compare() {
   await pool(urls, 8, async url => {
     const prod = await fetch(url, { redirect: 'manual' });
     await prod.body?.cancel();
-    const local = await fetch(LOCAL + url.pathname + url.search, {
-      redirect: 'manual',
-      headers: { 'X-Marquee-Host': url.hostname },
-    });
-    await local.body?.cancel();
+    const local = await localRequest(url);
     const a = summarize(prod);
     const b = summarize(local);
+    // wrangler dev serves http: and rewrites same-host redirects to match.
+    if (b.location) b.location = b.location.replace(/^http:\/\//, 'https://');
     const fields = Object.keys(a).filter(k => a[k] !== b[k]);
     if (fields.length === 0) same++;
     else diffs.push({ url: url.href, fields: fields.map(k => ({ k, prod: a[k], local: b[k] })) });

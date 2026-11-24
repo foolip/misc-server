@@ -4,9 +4,8 @@ This directory replaces the "marquee" nginx droplet (`debian/marquee/`) with a
 Cloudflare Worker in front of one R2 bucket. See
 [whatwg/misc-server#107](https://github.com/whatwg/misc-server/issues/107).
 
-This is phase 1 of the migration (see [Migration plan](#migration-plan)). The
-staging Worker runs at https://whatwg-sites-staging.whatwg.workers.dev; no
-production host is served by it yet.
+This is phase 1 of the migration (see [Migration plan](#migration-plan)). No
+host is served by the Worker yet.
 
 ## Architecture
 
@@ -47,7 +46,7 @@ Files:
 
 | Path | What |
 | --- | --- |
-| `wrangler.jsonc` | Worker config: R2 bindings, staging env, production routes |
+| `wrangler.jsonc` | Worker config: R2 binding and routes |
 | `src/index.mjs` | Worker entry point; passes the bucket and cache to the handler |
 | `src/handler.mjs` | Request handling (redirects, files, error pages, headers) |
 | `src/locations.mjs` | nginx `location` matching |
@@ -68,9 +67,8 @@ Node in tests with in-memory fakes.
 
 The Worker reproduces what nginx does on marquee:
 
-1. **Host.** From the request URL. In the staging environment only, the
-   `X-Marquee-Host` request header overrides it. Production ignores that
-   header. An unknown host gets `421`.
+1. **Host.** From the request URL, that is the `Host` header. An unknown host
+   gets `421`.
 2. **Server-level `return`** (the redirect-only hosts) runs before anything
    else, for any method. `$request_uri` and `$1`–`$9` are substituted
    (non-participating captures are empty), and relative targets are made
@@ -218,10 +216,10 @@ sample of production and compares the two:
 cd cloudflare
 npm ci                 # install wrangler
 npm run local:seed     # copy ~180 production files into local R2 (.wrangler/state)
-npm run dev            # wrangler dev --env staging, on http://localhost:8787
+npm run dev            # wrangler dev, on http://localhost:8787
 # in another terminal:
 npm run local:compare  # request ~600 URLs from production and locally, diff them
-curl -i -H 'X-Marquee-Host: dom.spec.whatwg.org' http://localhost:8787/commit-snapshots/
+curl -i -H 'Host: dom.spec.whatwg.org' http://localhost:8787/commit-snapshots/
 ```
 
 The sample is every `https:` URL in `../test/*.mjs` for a host the Worker
@@ -249,25 +247,8 @@ One-time setup (phase 2/4):
 3. Create an API token for deploys (Workers Scripts: Edit, Workers Routes: Edit,
    Account: Workers R2 Storage: Read) if deploys run from CI.
 
-Staging:
-
 ```sh
 npm ci   # once, installs wrangler
-npm run deploy:staging
-curl -H 'X-Marquee-Host: dom.spec.whatwg.org' https://whatwg-sites-staging.<account>.workers.dev/
-```
-
-`whatwg-sites-staging` uses the same bucket (read-only) and takes the host from
-`X-Marquee-Host`, or without that header (in a browser) serves
-`STAGING_DEFAULT_HOST`, set to `fullscreen.spec.whatwg.org` in
-`wrangler.jsonc`, so `https://whatwg-sites-staging.<account>.workers.dev/` shows the
-Fullscreen Standard. Redirect `Location`s use the real host, as nginx would. Note
-that the Cache API does nothing on `workers.dev`, so listings aren't cached
-there.
-
-Production:
-
-```sh
 npm run deploy
 ```
 
@@ -284,8 +265,10 @@ For each host:
 
 1. Make sure R2 has the host's files and that deploys are writing to both
    marquee and R2 (phase 3).
-2. Test it on staging with `X-Marquee-Host`, and run the production test suite
-   against the staging Worker if useful.
+2. Test it locally with `npm run dev` and `curl -H 'Host: <host>'
+   http://localhost:8787/…`. To read the real bucket instead of local R2,
+   add `"remote": true` to the R2 binding in `wrangler.jsonc` while testing
+   (not tried yet).
 3. Add the host to `routes` in `wrangler.jsonc`:
    ```jsonc
    "routes": [
@@ -483,7 +466,7 @@ Intentional or unavoidable differences:
   rclone should treat symlinks and hard links on marquee.
 - **Phase 3:** deploys write to both marquee and R2.
 - **Phase 4:** move the whatwg.org DNS zone from DigitalOcean to Cloudflare
-  with DNS-only records. Test the staging Worker.
+  with DNS-only records.
 - **Phase 5:** cut over one host at a time, html.spec last.
 - **Phase 6:** decommission marquee.
 

@@ -8,15 +8,12 @@
 //     bucket,          // R2 bucket (or fake) with all files, keyed <host><path>
 //     cache,           // optional Cache API object, used for listings
 //     waitUntil,       // optional ctx.waitUntil
-//     allowHostHeader, // staging: take the host from X-Marquee-Host
-//     defaultHost,     // staging: the host when there is no X-Marquee-Host
 //   })
 
 import { BadRequest, parseTarget, escapePath, escapeHeaderValue, extension } from './path.mjs';
 import { findLocation } from './locations.mjs';
 import { collectEntries, sortEntries, sortFromQuery, renderListing, objectDate } from './listing.mjs';
 
-export const HOST_HEADER = 'X-Marquee-Host';
 export const LISTING_CACHE_SECONDS = 300;
 
 // Statuses for which nginx applies `expires` and non-`always` add_header.
@@ -41,13 +38,8 @@ const REASONS = {
 
 export async function handle(request, deps) {
   const url = new URL(request.url);
-  let host = url.hostname;
-  if (deps.allowHostHeader) {
-    // Staging: the X-Marquee-Host header, else the configured default host,
-    // so that a browser (which can't set the header) sees a site too.
-    host = request.headers.get(HOST_HEADER) ?? deps.defaultHost ?? host;
-  }
-  host = host.toLowerCase();
+  // The host from the request URL, i.e. the Host header.
+  const host = url.hostname.toLowerCase();
   const hostConf = deps.config.hosts[host];
   if (!hostConf) {
     return new Response(`Unknown host ${host}\n`, {

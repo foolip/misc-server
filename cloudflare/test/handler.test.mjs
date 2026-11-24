@@ -374,32 +374,9 @@ describe('hosts', () => {
     assert.equal((await fetch('https://example.com/')).status, 421);
   });
 
-  test('X-Marquee-Host is ignored in production', async () => {
+  test('the host comes from the request URL', async () => {
     const { fetch } = setup();
-    const r = await fetch('https://marquee.example.workers.dev/', { headers: { 'X-Marquee-Host': 'www.whatwg.org' } });
-    assert.equal(r.status, 421);
-  });
-
-  test('staging falls back to the default host', async () => {
-    const { deps } = setup({ 'fullscreen.spec.whatwg.org/index.html': 'fullscreen' });
-    const staging = { ...deps, allowHostHeader: true, defaultHost: 'fullscreen.spec.whatwg.org' };
-    const r = await handle(new Request('https://whatwg-sites-staging.example.workers.dev/'), staging);
-    assert.equal(r.status, 200);
-    assert.equal(await r.text(), 'fullscreen');
-    const other = await handle(new Request('https://whatwg-sites-staging.example.workers.dev/', {
-      headers: { 'X-Marquee-Host': 'www.whatwg.org' },
-    }), staging);
-    assert.equal(other.status, 301);
-    // Production ignores the default host.
-    const prod = await handle(new Request('https://marquee.example.workers.dev/'), { ...deps, defaultHost: 'fullscreen.spec.whatwg.org' });
-    assert.equal(prod.status, 421);
-  });
-
-  test('X-Marquee-Host is used in staging', async () => {
-    const { deps } = setup();
-    const r = await handle(new Request('https://whatwg-sites-staging.example.workers.dev/x', {
-      headers: { 'X-Marquee-Host': 'www.whatwg.org' },
-    }), { ...deps, allowHostHeader: true });
+    const r = await fetch('https://WWW.whatwg.org/x');
     assert.equal(r.status, 301);
     assert.equal(r.headers.get('location'), 'https://whatwg.org/x');
   });
