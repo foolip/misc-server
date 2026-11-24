@@ -294,7 +294,7 @@ repository's `production` environment (see [Deploy credentials](#deploy-credenti
 
 ```sh
 aws s3 sync out/ "s3://whatwg-sites/$HOST/" \
-  --endpoint-url "$R2_ENDPOINT" --region auto \
+  --endpoint-url "$R2_ENDPOINT" \
   --exclude 'commit-snapshots/*' --exclude 'review-drafts/*'   # add --delete where rsync has it
 ```
 
@@ -324,8 +324,8 @@ checking in `deploy.sh`):
 
 ```sh
 dest="s3://whatwg-sites/$HOST/commit-snapshots/$SHA/"
-if [ -z "$(aws s3 ls "$dest" --endpoint-url "$R2_ENDPOINT" --region auto)" ]; then
-  aws s3 sync "out/commit-snapshots/$SHA/" "$dest" --endpoint-url "$R2_ENDPOINT" --region auto
+if [ -z "$(aws s3 ls "$dest" --endpoint-url "$R2_ENDPOINT")" ]; then
+  aws s3 sync "out/commit-snapshots/$SHA/" "$dest" --endpoint-url "$R2_ENDPOINT"
 fi
 ```
 
