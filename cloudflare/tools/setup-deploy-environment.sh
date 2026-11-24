@@ -4,10 +4,17 @@
 # deploy credentials as environment secrets. Re-run it to rotate the token.
 #
 # Usage:
-#   export R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
-#   cloudflare/tools/setup-deploy-environment.sh whatwg/dom whatwg/fetch ...
+#   cloudflare/tools/setup-deploy-environment.sh whatwg/whatwg.org ...
 #
-# Needs `gh` logged in as someone with admin access to the repositories.
+# The secret values come from cloudflare-r2.json in the private whatwg/admin
+# repository ({"R2_ACCESS_KEY_ID": ..., "R2_SECRET_ACCESS_KEY": ...,
+# "R2_ENDPOINT": ...}), or from environment variables of the same names if all
+# three are set. To rotate: new R2 token, update that file, re-run this (and
+# spec-factory's factory.py --settings --all for the standards), delete the
+# old token.
+#
+# Needs `gh` logged in as someone with admin access to the repositories, and
+# jq.
 #
 # The environment names main explicitly ("selected branches"), rather than
 # using "protected branches only": that option only recognizes classic branch
@@ -19,7 +26,20 @@
 set -o errexit -o nounset -o pipefail
 
 ENV=${ENV:-production}
-: "${R2_ACCESS_KEY_ID:?}" "${R2_SECRET_ACCESS_KEY:?}" "${R2_ENDPOINT:?}"
+SECRETS_REPO=whatwg/admin
+SECRETS_FILE=cloudflare-r2.json
+
+if [[ -z "${R2_ACCESS_KEY_ID:-}" || -z "${R2_SECRET_ACCESS_KEY:-}" || -z "${R2_ENDPOINT:-}" ]]; then
+  json=$(gh api "repos/$SECRETS_REPO/contents/$SECRETS_FILE" --jq .content | base64 -d)
+  for name in R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_ENDPOINT; do
+    value=$(jq -r --arg name "$name" '.[$name] // empty' <<<"$json")
+    if [[ -z "$value" ]]; then
+      echo "error: $SECRETS_REPO/$SECRETS_FILE has no $name" >&2
+      exit 1
+    fi
+    printf -v "$name" '%s' "$value"
+  done
+fi
 
 if [[ $# -eq 0 ]]; then
   echo "usage: $0 owner/repo..." >&2
