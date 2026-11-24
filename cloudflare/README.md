@@ -4,8 +4,9 @@ This directory replaces the "marquee" nginx droplet (`debian/marquee/`) with a
 Cloudflare Worker in front of one R2 bucket. See
 [whatwg/misc-server#107](https://github.com/whatwg/misc-server/issues/107).
 
-This is phase 1 of the migration (see [Migration plan](#migration-plan)). Nothing
-here is deployed yet, because there is no Cloudflare account yet.
+This is phase 1 of the migration (see [Migration plan](#migration-plan)). The
+staging Worker runs at https://marquee-staging.whatwg.workers.dev; no
+production host is served by it yet.
 
 ## Architecture
 
@@ -235,8 +236,8 @@ seeding times.
 
 ## Deploying
 
-There is no Cloudflare account yet, so none of this has been run. The account
-should be in shared custody of the people on admin@whatwg.org.
+The Cloudflare account is `whatwg`, which should be in shared custody of the
+people on admin@whatwg.org.
 
 One-time setup (phase 2/4):
 
@@ -488,13 +489,13 @@ Intentional or unavoidable differences:
 
 ## Open questions
 
-- Whether Worker Custom Domains get certificates for two-level hostnames like
-  `dom.spec.whatwg.org`. Universal SSL only covers `whatwg.org` and
-  `*.whatwg.org`; Custom Domains are supposed to issue their own certificate
-  per hostname, but this needs checking on the real account (otherwise:
-  Advanced Certificate Manager for `*.spec.whatwg.org` and
-  `*.idea.whatwg.org`).
-- The Cloudflare account doesn't exist yet. It should be in shared custody of
+- Certificates for hostnames two levels deep like `dom.spec.whatwg.org`.
+  Universal SSL only covers `whatwg.org` and `*.whatwg.org`, but Cloudflare's
+  [Custom Domains docs](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)
+  say each Custom Domain gets its own certificate, which covers multi-level
+  subdomains without Advanced Certificate Manager. Confirm with the first
+  host cut over (fullscreen.spec.whatwg.org is a good candidate).
+- The Cloudflare account (`whatwg`) exists. It should be in shared custody of
   the people on admin@whatwg.org. DigitalOcean (current DNS) and registrar
   access exist, so the zone move in phase 4 isn't blocked on access.
 - Per-request limits on R2 operations for large listings
