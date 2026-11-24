@@ -6,15 +6,14 @@
 # Usage:
 #   cloudflare/tools/setup-deploy-environment.sh whatwg/whatwg.org ...
 #
-# The secret values come from cloudflare-r2.json in the private whatwg/admin
-# repository ({"R2_ACCESS_KEY_ID": ..., "R2_SECRET_ACCESS_KEY": ...,
-# "R2_ENDPOINT": ...}), or from environment variables of the same names if all
-# three are set. To rotate: new R2 token, update that file, re-run this (and
-# spec-factory's factory.py --settings --all for the standards), delete the
-# old token.
+# The values of the R2 token aren't stored anywhere: the script asks for them
+# (the secret key without echo), or takes them from environment variables of
+# the same names if all three are set. Each run therefore uses a new token,
+# which replaces the old one everywhere: create a new R2 token, run this for
+# whatwg/whatwg.org and spec-factory's factory.py --settings --all for the
+# standards, then delete the old token.
 #
-# Needs `gh` logged in as someone with admin access to the repositories, and
-# jq.
+# Needs `gh` logged in as someone with admin access to the repositories.
 #
 # The environment names main explicitly ("selected branches"), rather than
 # using "protected branches only": that option only recognizes classic branch
@@ -26,19 +25,15 @@
 set -o errexit -o nounset -o pipefail
 
 ENV=${ENV:-production}
-SECRETS_REPO=whatwg/admin
-SECRETS_FILE=cloudflare-r2.json
-
 if [[ -z "${R2_ACCESS_KEY_ID:-}" || -z "${R2_SECRET_ACCESS_KEY:-}" || -z "${R2_ENDPOINT:-}" ]]; then
-  json=$(gh api "repos/$SECRETS_REPO/contents/$SECRETS_FILE" --jq .content | base64 -d)
-  for name in R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_ENDPOINT; do
-    value=$(jq -r --arg name "$name" '.[$name] // empty' <<<"$json")
-    if [[ -z "$value" ]]; then
-      echo "error: $SECRETS_REPO/$SECRETS_FILE has no $name" >&2
-      exit 1
-    fi
-    printf -v "$name" '%s' "$value"
-  done
+  echo "Values of the new R2 API token (Cloudflare shows them when the token is created):"
+  read -r -p "  R2_ACCESS_KEY_ID: " R2_ACCESS_KEY_ID
+  read -r -s -p "  R2_SECRET_ACCESS_KEY: " R2_SECRET_ACCESS_KEY; echo
+  read -r -p "  R2_ENDPOINT: " R2_ENDPOINT
+  if [[ -z "$R2_ACCESS_KEY_ID" || -z "$R2_SECRET_ACCESS_KEY" || -z "$R2_ENDPOINT" ]]; then
+    echo "error: all three values are needed" >&2
+    exit 1
+  fi
 fi
 
 if [[ $# -eq 0 ]]; then

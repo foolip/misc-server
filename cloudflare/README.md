@@ -418,21 +418,15 @@ branch never gets the credentials, however its workflow file was edited. The
 `GITHUB_REF` checks in `deploy.sh` and similar don't protect against that, since
 code on the branch can change them.
 
-The values are kept in `cloudflare-r2.json` in the private whatwg/admin
-repository, which only admins can read:
-
-```json
-{"R2_ACCESS_KEY_ID": "…", "R2_SECRET_ACCESS_KEY": "…", "R2_ENDPOINT": "https://<account-id>.r2.cloudflarestorage.com"}
-```
-
 ```sh
 cloudflare/tools/setup-deploy-environment.sh whatwg/whatwg.org
 ```
 
-creates or updates the environment and sets its secrets from that file
-(environment variables of the same names override it). For the standards,
-spec-factory's `factory.py --settings --all` does the same. To rotate: create a
-new R2 token, update the file, re-run both, delete the old token. It names `main` explicitly rather than using "protected branches only",
+creates or updates the environment and sets its secrets, asking for the values
+of the R2 token (or taking them from environment variables of the same names).
+For the standards, spec-factory's `factory.py --settings --all` does the same.
+The values aren't stored anywhere, so adding a standard means rotating
+everywhere: create a new R2 token, run both, delete the old token. It names `main` explicitly rather than using "protected branches only",
 because that option only counts classic branch protection, and lets every
 branch deploy when a repository has none. Protecting `main` is what makes
 "merged to `main`" mean "reviewed", so the script refuses a repository unless
