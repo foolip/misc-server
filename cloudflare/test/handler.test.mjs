@@ -383,10 +383,10 @@ describe('hosts', () => {
   test('staging falls back to the default host', async () => {
     const { deps } = setup({ 'fullscreen.spec.whatwg.org/index.html': 'fullscreen' });
     const staging = { ...deps, allowHostHeader: true, defaultHost: 'fullscreen.spec.whatwg.org' };
-    const r = await handle(new Request('https://marquee-staging.example.workers.dev/'), staging);
+    const r = await handle(new Request('https://whatwg-sites-staging.example.workers.dev/'), staging);
     assert.equal(r.status, 200);
     assert.equal(await r.text(), 'fullscreen');
-    const other = await handle(new Request('https://marquee-staging.example.workers.dev/', {
+    const other = await handle(new Request('https://whatwg-sites-staging.example.workers.dev/', {
       headers: { 'X-Marquee-Host': 'www.whatwg.org' },
     }), staging);
     assert.equal(other.status, 301);
@@ -397,7 +397,7 @@ describe('hosts', () => {
 
   test('X-Marquee-Host is used in staging', async () => {
     const { deps } = setup();
-    const r = await handle(new Request('https://marquee-staging.example.workers.dev/x', {
+    const r = await handle(new Request('https://whatwg-sites-staging.example.workers.dev/x', {
       headers: { 'X-Marquee-Host': 'www.whatwg.org' },
     }), { ...deps, allowHostHeader: true });
     assert.equal(r.status, 301);

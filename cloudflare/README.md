@@ -5,19 +5,19 @@ Cloudflare Worker in front of one R2 bucket. See
 [whatwg/misc-server#107](https://github.com/whatwg/misc-server/issues/107).
 
 This is phase 1 of the migration (see [Migration plan](#migration-plan)). The
-staging Worker runs at https://marquee-staging.whatwg.workers.dev; no
+staging Worker runs at https://whatwg-sites-staging.whatwg.workers.dev; no
 production host is served by it yet.
 
 ## Architecture
 
 ```
             ┌──────────────────────────── Cloudflare ─────────────────────────────┐
- browser ──▶│ Always Use HTTPS ─▶ Worker "marquee" ──────▶ R2 bucket whatwg-sites │
+ browser ──▶│ Always Use HTTPS ─▶ Worker whatwg-sites ───▶ R2 bucket whatwg-sites │
             │  (TLS, compression)  (src/, hosts.json)                             │
-            └──────────────────────────────────────────────────────────────────────┘
+            └─────────────────────────────────────────────────────────────────────┘
 ```
 
-- **One Worker** (`marquee`) serves all 49 hosts in `debian/marquee/DOMAINS`.
+- **One Worker**, `whatwg-sites` (the same name as the bucket), serves all 49 hosts in `debian/marquee/DOMAINS`.
   17 of them only redirect; the other 32 serve files.
 - **One R2 bucket, `whatwg-sites`** (binding `BUCKET`), holds every host's
   files at `<host>/<path>`, mirroring marquee's `/var/www/<host>/<path>`:
@@ -254,13 +254,13 @@ Staging:
 ```sh
 npm ci   # once, installs wrangler
 npm run deploy:staging
-curl -H 'X-Marquee-Host: dom.spec.whatwg.org' https://marquee-staging.<account>.workers.dev/
+curl -H 'X-Marquee-Host: dom.spec.whatwg.org' https://whatwg-sites-staging.<account>.workers.dev/
 ```
 
-`marquee-staging` uses the same bucket (read-only) and takes the host from
+`whatwg-sites-staging` uses the same bucket (read-only) and takes the host from
 `X-Marquee-Host`, or without that header (in a browser) serves
 `STAGING_DEFAULT_HOST`, set to `fullscreen.spec.whatwg.org` in
-`wrangler.jsonc`, so `https://marquee-staging.<account>.workers.dev/` shows the
+`wrangler.jsonc`, so `https://whatwg-sites-staging.<account>.workers.dev/` shows the
 Fullscreen Standard. Redirect `Location`s use the real host, as nginx would. Note
 that the Cache API does nothing on `workers.dev`, so listings aren't cached
 there.
