@@ -383,15 +383,16 @@ Each upload is skipped when the credentials aren't set, so the order matters
 only in that a workflow mentioning `environment: production` before the
 environment exists makes GitHub create it with no branch rule. So:
 
-1. `setup-main-ruleset.sh`, for repositories whose `main` isn't protected by
-   the ruleset yet.
+1. Protect `main` with a ruleset: for the standards, spec-factory's
+   `factory.py --update-settings --all` (an organization ruleset); for
+   whatwg.org, `setup-main-ruleset.sh`.
 2. `setup-repositories.sh`.
 3. Merge the workflow changes (the shared `deploy.sh` takes effect for all
    standards once whatwg.org has deployed it to resources.whatwg.org).
 
-Both scripts default to whatwg/whatwg.org and the repository of every standard
-in whatwg/sg's `db.json`, the list spec-factory uses (`tools/whatwg-repos.sh`),
-so a new standard is covered by re-running them. Repositories that deploy to
+`setup-repositories.sh` defaults to whatwg/whatwg.org and the repository of
+every standard in whatwg/sg's `db.json`, the list spec-factory uses
+(`tools/whatwg-repos.sh`), so a new standard is covered by re-running it. Repositories that deploy to
 marquee today (from a code search for `MARQUEE_DEPLOY_KEY` in whatwg):
 
 ```
@@ -434,10 +435,12 @@ branch deploy when a repository has none. Protecting `main` is what makes
 "merged to `main`" mean "reviewed", so the script refuses a repository unless
 `main` has a ruleset requiring pull requests (`REQUIRE_RULESET=0` skips that
 check, for testing in a fork). Converting the whatwg repositories from classic
-branch protection to rulesets is part of the migration:
+branch protection to rulesets is part of the migration. For the standards,
+spec-factory's `factory.py --update-settings` does that with an organization
+ruleset; for whatwg.org:
 
 ```sh
-DELETE_CLASSIC=1 cloudflare/tools/setup-main-ruleset.sh   # or with owner/repo arguments
+DELETE_CLASSIC=1 cloudflare/tools/setup-main-ruleset.sh   # whatwg/whatwg.org, or owner/repo arguments
 ```
 
 creates or updates a ruleset named `main` on the default branch: no deletion,

@@ -12,8 +12,9 @@
 # Usage:
 #   cloudflare/tools/setup-main-ruleset.sh [owner/repo...]
 #
-# Without arguments: whatwg/whatwg.org and every standard in whatwg/sg's
-# db.json (see whatwg-repos.sh).
+# Without arguments: whatwg/whatwg.org. The standards are protected by the
+# organization ruleset "standards" instead, which spec-factory's
+# factory.py --update-settings manages.
 #
 # Options (environment variables):
 #   DELETE_CLASSIC=1  delete the classic branch protection on the default
@@ -29,11 +30,10 @@ set -o errexit -o nounset -o pipefail
 NAME=main
 REQUIRED_CHECKS=(Participation Build)
 
-HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 if [[ $# -gt 0 ]]; then
   repos=("$@")
 else
-  mapfile -t repos < <("$HERE/whatwg-repos.sh")
+  repos=(whatwg/whatwg.org)
 fi
 
 checks_json=$(printf '%s\n' "${REQUIRED_CHECKS[@]}" | jq -R '{context: .}' | jq -s .)
