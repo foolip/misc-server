@@ -18,7 +18,7 @@
 # Options (environment variables):
 #   DELETE_CLASSIC=1  delete the classic branch protection on the default
 #                     branch once the ruleset is active
-#   FORCE=1           apply even if the default branch's latest commit doesn't
+#   FORCE=1           apply even if the latest merged pull request doesn't
 #                     report both required checks (otherwise such a repository
 #                     is skipped, because every PR there would be blocked)
 #
@@ -66,15 +66,19 @@ for repo in "${repos[@]}"; do
   echo "== $repo"
   branch=$(gh api "repos/$repo" --jq .default_branch)
 
-  # Every required check must exist, or no PR could ever be merged.
-  reported=$( (gh api "repos/$repo/commits/$branch/check-runs" --paginate --jq '.check_runs[].name'
-               gh api "repos/$repo/commits/$branch/status" --jq '.statuses[].context') | sort -u)
+  # Every required check must exist, or no PR could ever be merged. Look at
+  # the latest merged PR, not the branch: Participation is only reported on
+  # PRs, and squashing or rebasing makes new commits.
+  sha=$(gh api "repos/$repo/pulls?state=closed&base=$branch&sort=updated&direction=desc&per_page=30" \
+    --jq '[.[] | select(.merged_at)] | max_by(.merged_at) | .head.sha // empty')
+  reported=$( [[ -z "$sha" ]] || (gh api "repos/$repo/commits/$sha/check-runs" --paginate --jq '.check_runs[].name'
+               gh api "repos/$repo/commits/$sha/status" --jq '.statuses[].context') | sort -u)
   missing=()
   for check in "${REQUIRED_CHECKS[@]}"; do
     grep -qxF "$check" <<<"$reported" || missing+=("$check")
   done
   if [[ ${#missing[@]} -gt 0 && "${FORCE:-0}" != 1 ]]; then
-    echo "error: $branch in $repo doesn't report check(s): ${missing[*]}; skipping (FORCE=1 to apply anyway)" >&2
+    echo "error: the latest merged PR to $branch in $repo doesn't report check(s): ${missing[*]}; skipping (FORCE=1 to apply anyway)" >&2
     failed=1
     continue
   fi
