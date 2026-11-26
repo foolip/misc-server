@@ -12,9 +12,8 @@
 # Usage:
 #   cloudflare/tools/setup-main-ruleset.sh [owner/repo...]
 #
-# Without arguments: whatwg/whatwg.org. The standards are protected by the
-# organization ruleset "standards" instead, which spec-factory's
-# factory.py --update-settings manages.
+# Without arguments: whatwg/whatwg.org. The standards are protected by
+# rulesets that spec-factory's factory.py --update-settings manages instead.
 #
 # Options (environment variables):
 #   DELETE_CLASSIC=1  delete the classic branch protection on the default
