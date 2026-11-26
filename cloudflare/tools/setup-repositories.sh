@@ -3,8 +3,9 @@
 # given repository, or by default in all of them (whatwg/whatwg.org and every
 # standard in whatwg/sg's db.json, see whatwg-repos.sh):
 #
-#   - main must have a ruleset requiring pull requests (see
-#     setup-main-ruleset.sh), or the repository is skipped;
+#   - main must have a ruleset requiring pull requests (spec-factory's
+#     factory.py --update-settings sets that up for the standards), or the
+#     repository is skipped;
 #   - the "production" environment is created or updated so that only the main
 #     branch can use it;
 #   - its secrets R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_ENDPOINT are set.

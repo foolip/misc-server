@@ -383,9 +383,9 @@ Each upload is skipped when the credentials aren't set, so the order matters
 only in that a workflow mentioning `environment: production` before the
 environment exists makes GitHub create it with no branch rule. So:
 
-1. Protect `main` with a ruleset: for the standards, spec-factory's
-   `factory.py --update-settings --all` (an organization ruleset); for
-   whatwg.org, `setup-main-ruleset.sh`.
+1. Protect `main` with rulesets: spec-factory's
+   `factory.py --update-settings --all` for the standards; by hand for
+   whatwg.org.
 2. `setup-repositories.sh`.
 3. Merge the workflow changes (the shared `deploy.sh` takes effect for all
    standards once whatwg.org has deployed it to resources.whatwg.org).
@@ -436,19 +436,9 @@ branch deploy when a repository has none. Protecting `main` is what makes
 `main` has a ruleset requiring pull requests (`REQUIRE_RULESET=0` skips that
 check, for testing in a fork). Converting the whatwg repositories from classic
 branch protection to rulesets is part of the migration. For the standards,
-spec-factory's `factory.py --update-settings` does that with an organization
-ruleset; for whatwg.org:
-
-```sh
-DELETE_CLASSIC=1 cloudflare/tools/setup-main-ruleset.sh   # whatwg/whatwg.org, or owner/repo arguments
-```
-
-creates or updates a ruleset named `main` on the default branch: no deletion,
-no force pushes, linear history, a pull request with 1 approval, the `Participation` and `Build`
-checks passing, and no bypass. It skips a repository whose default branch
-doesn't report both checks (every PR there would be blocked; `FORCE=1`
-overrides), and only deletes the classic protection after checking the ruleset
-is in effect.
+spec-factory's `factory.py --update-settings` does that, and is the only
+script that changes branch protection. whatwg.org isn't a standard, so its
+ruleset is set up by hand in the repository's settings.
 
 Workflows use the environment only for runs on `main`, so PR builds (whose
 ref is `refs/pull/…/merge`, which the environment would refuse) still run
